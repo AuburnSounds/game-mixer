@@ -10,13 +10,13 @@ nothrow:
 
 
 /// Create a `Mixer` and start playback.
-Mixer mixerCreate(MixerOptions options = MixerOptions.init)
+IMixer mixerCreate(MixerOptions options = MixerOptions.init)
 {
     return mallocNew!Mixer(options);
 }
 
 /// Stops `playback`.
-void mixerDestroy(Mixer mixer)
+void mixerDestroy(IMixer mixer)
 {
     destroyFree(mixer);
 }
@@ -30,7 +30,20 @@ struct MixerOptions
     int tracks = 16;
 }
 
-class Mixer
+/// Public API for the `Mixer` object.
+interface IMixer
+{
+    /// Returns: `true` if a playback error has been detected.
+    ///          Your best bet is to recreate a `Mixer`.
+    bool isErrored();
+
+    /// Returns: An error message for the last error.
+    /// Warning: only call this if `isErrored()` returns `true`.
+    const(char)[] lastErrorString();
+}
+
+/// Implementation of `IMixer`.
+class Mixer : IMixer
 {
 nothrow:
 @nogc:
@@ -108,14 +121,12 @@ nothrow:
         cleanUp();        
     }   
 
-    ///
-    bool isErrored()
+    override bool isErrored()
     {
         return _errored;
     }
 
-    ///
-    const(char)[] lastErrorString()
+    override const(char)[] lastErrorString()
     {
         assert(isErrored);
         return _lastError;
@@ -129,6 +140,8 @@ private:
 
     bool _errored;
     const(char)[] _lastError;
+
+    float[][2] _sumBuf;
 
     shared(bool) _shouldReadEvents = true;
 
@@ -178,11 +191,10 @@ private:
             soundio_destroy(_soundio);
             _soundio = null;
         }
+
+        _sumBuf[0].reallocBuffer(0);
+        _sumBuf[1].reallocBuffer(0);
     }
-
-    double seconds_offset = 0.0;
-
-    import std.math;
 
     void writeCallback(SoundIoOutStream* stream, int frames)
     {
@@ -191,9 +203,22 @@ private:
         double seconds_per_frame = 1.0 / float_sample_rate;
         SoundIoChannelArea* areas;
 
+        if (frames > _sumBuf[0].length)
+        {
+            _sumBuf[0].reallocBuffer(frames);
+            _sumBuf[1].reallocBuffer(frames);
+        }
+
+        // 1. Mix sources in stereo.
+        _sumBuf[0][0..frames] = 0;
+        _sumBuf[1][0..frames] = 0;
+
+        // 2. Pass the audio to libsoundio
+
         int frames_left = frames;
 
-        for (;;) {
+        for (;;) 
+        {
             int frame_count = frames_left;
             if (auto err = soundio_outstream_begin_write(_outstream, &areas, &frame_count)) 
             {
@@ -205,16 +230,16 @@ private:
 
             const(SoundIoChannelLayout)* layout = &stream.layout;
 
-            double pitch = 440.0;
-            double radians_per_second = pitch * 2.0 * PI;
-            for (int frame = 0; frame < frame_count; frame += 1) {
-                double sample = sineAmplitude * sin((seconds_offset + frame * seconds_per_frame) * radians_per_second);
-                for (int channel = 0; channel < layout.channel_count; channel += 1) {
-                    write_sample_float32ne(areas[channel].ptr, sample);
+            for (int frame = 0; frame < frame_count; frame += 1) 
+            {
+                for (int channel = 0; channel < layout.channel_count; channel += 1) 
+                {
+                    float sample = channel >= 2 ? 0.0f : _sumBuf[channel][frame];
+                    int outChan = channel % 2;
+                    write_sample_float32ne(areas[channel].ptr, 0);
                     areas[channel].ptr += areas[channel].step;
                 }
             }
-            seconds_offset = fmod(seconds_offset + seconds_per_frame * frame_count, 1.0);
 
             if (auto err = soundio_outstream_end_write(stream)) 
             {

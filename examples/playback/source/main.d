@@ -3,7 +3,7 @@ import gamemixer;
 
 void main()
 {
-    Mixer mixer = mixerCreate();
+    IMixer mixer = mixerCreate();
     
     // Wait until keypress
     writeln("Press ENTER to end the playback...");
