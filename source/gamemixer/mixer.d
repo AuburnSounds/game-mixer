@@ -4,10 +4,12 @@ import core.atomic;
 import dplug.core;
 import soundio;
 
+import gamemixer.effects;
+
 nothrow:
 @nogc:
 
-
+// TODO call endPlaying for master effects
 
 /// Create a `Mixer` and start playback.
 IMixer mixerCreate(MixerOptions options = MixerOptions.init)
@@ -33,6 +35,8 @@ struct MixerOptions
 /// Public API for the `Mixer` object.
 interface IMixer
 {
+nothrow:
+@nogc:
     /// Returns: `true` if a playback error has been detected.
     ///          Your best bet is to recreate a `Mixer`.
     bool isErrored();
@@ -40,14 +44,19 @@ interface IMixer
     /// Returns: An error message for the last error.
     /// Warning: only call this if `isErrored()` returns `true`.
     const(char)[] lastErrorString();
+
+    /// Adds an effect on the master channel (all sounds mixed together).
+    void addMasterEffect(IEffect effect);
 }
 
+
+
 /// Implementation of `IMixer`.
-class Mixer : IMixer
+private final class Mixer : IMixer
 {
 nothrow:
 @nogc:
-
+public:
     this(MixerOptions options)
     {
         _soundio = soundio_create();
@@ -112,8 +121,12 @@ nothrow:
 
         // start event thread
 
+        _framesElapsed = 0;
+
         _eventThread = makeThread(&waitEvents);
         _eventThread.start();
+
+        _masterEffectsMutex = makeMutex();
     }
 
     ~this()
@@ -132,11 +145,27 @@ nothrow:
         return _lastError;
     }
 
+    override void addMasterEffect(IEffect effect)
+    {
+        _masterEffectsMutex.lock();
+        _masterEffects.pushBack(EffectContext(effect, ));
+        _masterEffectsMutex.unlock();
+    }
+
 private:
     SoundIo* _soundio;
     SoundIoDevice* _device;
     SoundIoOutStream* _outstream;
     Thread _eventThread;
+    long _framesElapsed;
+
+    static struct EffectContext
+    {
+        IEffect fx;
+        bool initialized;
+    }
+    Vec!EffectContext _masterEffects; // sync by _masterEffectsMutex
+    UncheckedMutex _masterEffectsMutex;
 
     bool _errored;
     const(char)[] _lastError;
@@ -166,6 +195,11 @@ private:
 
     void cleanUp()
     {    
+        // remove effects
+        _masterEffectsMutex.lock();
+        _masterEffects.clearContents();
+        _masterEffectsMutex.unlock();
+
         if (_outstream !is null)
         {
             soundio_outstream_destroy(_outstream);
@@ -212,6 +246,29 @@ private:
         // 1. Mix sources in stereo.
         _sumBuf[0][0..frames] = 0;
         _sumBuf[1][0..frames] = 0;
+
+        // 2. Apply master effects
+        _masterEffectsMutex.lock();
+        foreach(ref EffectContext ec; _masterEffects[])
+        {
+            if (!ec.initialized)
+            {
+                ec.fx.beginPlaying(stream.sample_rate);
+                ec.initialized = true;
+            }
+            
+            // apply effect
+            float*[2] inoutBuffers;
+            inoutBuffers[0] = _sumBuf[0].ptr;
+            inoutBuffers[1] = _sumBuf[1].ptr;
+            ec.fx.processAudio(inoutBuffers, frames, _framesElapsed);
+
+            IEffect fx;
+            bool initialized;
+        }
+        _masterEffectsMutex.unlock();
+
+        _framesElapsed += frames;
 
         // 2. Pass the audio to libsoundio
 
