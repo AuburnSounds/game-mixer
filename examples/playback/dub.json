@@ -1,0 +1,8 @@
+{
+    "name": "playback",
+
+    "dependencies":
+    {
+        "game-mixer": { "path": "../.."}
+    }
+}
