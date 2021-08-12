@@ -327,7 +327,7 @@ private:
             info.timeInFramesSinceThisEffectStarted = ec.framesSinceInit;
             info.userData                           = null;
 
-            ec.fx.processAudio(inoutBuffers, frames, info); // apply effect
+            ec.fx.processAudio(inoutBuffers[0..2], frames, info); // apply effect
             ec.framesSinceInit += frames;
         }
         _masterEffectsMutex.unlock();
@@ -355,9 +355,8 @@ private:
             {
                 for (int channel = 0; channel < layout.channel_count; channel += 1) 
                 {
-                    import std.math;
-                    float sample = (channel >= 2) ? 0.0f : std.math.sin(cast(float)frame) * 0.25f;//_sumBuf[channel][frame];
-                    write_sample_float32ne(areas[channel].ptr, 0);
+                    float sample = _sumBuf[channel][frame];
+                    write_sample_float32ne(areas[channel].ptr, sample);
                     areas[channel].ptr += areas[channel].step;
                 }
             }
