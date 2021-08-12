@@ -5,6 +5,7 @@ import dplug.core;
 import soundio;
 
 import gamemixer.effects;
+import gamemixer.source;
 
 nothrow:
 @nogc:
@@ -46,14 +47,22 @@ nothrow:
     const(char)[] lastErrorString();
 
     /// Adds an effect on the master channel (all sounds mixed together).
-    void addMasterEffect(IEffect effect);
+    void addMasterEffect(IAudioEffect effect);
 
     /// Creates an effect with a custom callback processing function.
     /// (All effects get destroyed automatically when the IMixer is destroyed).
-    IEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
+    IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
+
+    /// Create a source from file or memory.
+    /// (All sources get destroyed automatically when the IMixer is destroyed).
+    /// Returns: `null` if loading failed
+    IAudioSource createSourceFromMemory(const(ubyte[]) inputData);
+
+    ///ditto
+    IAudioSource createSourceFromMemoryFile(const(char[]) path);
 }
 
-
+package:
 
 /// Implementation of `IMixer`.
 private final class Mixer : IMixer
@@ -96,11 +105,14 @@ public:
             return;
         }
 
+        _masterEffectsMutex = makeMutex();
+
         _outstream = soundio_outstream_create(_device);
         _outstream.format = SoundIoFormatFloat32NE; // little endian floats
         _outstream.write_callback = &mixerWriteCallback;
         _outstream.userdata = cast(void*)this;
         _outstream.sample_rate = cast(int) options.sampleRate;
+        _outstream.software_latency = 0.010; // 10ms
 
         err = soundio_outstream_open(_outstream);
 
@@ -128,9 +140,7 @@ public:
         _framesElapsed = 0;
 
         _eventThread = makeThread(&waitEvents);
-        _eventThread.start();
-
-        _masterEffectsMutex = makeMutex();
+        _eventThread.start();       
     }
 
     ~this()
@@ -149,18 +159,48 @@ public:
         return _lastError;
     }
 
-    override void addMasterEffect(IEffect effect)
+    override void addMasterEffect(IAudioEffect effect)
     {
         _masterEffectsMutex.lock();
         _masterEffects.pushBack(EffectContext(effect, false, 0));
         _masterEffectsMutex.unlock();
     }
 
-    override IEffect createEffectCustom(EffectCallbackFunction callback, void* userData)
+    override IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData)
     {
-        IEffect fx = mallocNew!EffectCallback(callback, userData);
+        IAudioEffect fx = mallocNew!EffectCallback(callback, userData);
         _allCreatedEffects.pushBack(fx);
         return fx;
+    }
+
+    override IAudioSource createSourceFromMemory(const(ubyte[]) inputData)
+    {
+        try
+        {
+            IAudioSource s = mallocNew!AudioSource(inputData);
+            _allCreatedSource.pushBack(s);
+            return s;
+        }
+        catch(Exception e)
+        {
+            destroyFree(e); // TODO maybe leaks
+            return null;
+        }
+    }
+
+    override IAudioSource createSourceFromMemoryFile(const(char[]) path)
+    {
+        try
+        {
+            IAudioSource s = mallocNew!AudioSource(path);
+            _allCreatedSource.pushBack(s);
+            return s;
+        }
+        catch(Exception e)
+        {
+            destroyFree(e); // TODO maybe leaks
+            return null;
+        }
     }
 
 private:
@@ -172,14 +212,15 @@ private:
 
     static struct EffectContext
     {
-        IEffect fx;
+        IAudioEffect fx;
         bool initialized;
         long framesSinceInit;
     }
     Vec!EffectContext _masterEffects; // sync by _masterEffectsMutex
     UncheckedMutex _masterEffectsMutex;
 
-    Vec!IEffect _allCreatedEffects;
+    Vec!IAudioEffect _allCreatedEffects;
+    Vec!IAudioSource _allCreatedSource;
 
     bool _errored;
     const(char)[] _lastError;
@@ -276,7 +317,6 @@ private:
                 ec.framesSinceInit = 0;
             }
             
-            // apply effect
             float*[2] inoutBuffers;
             inoutBuffers[0] = _sumBuf[0].ptr;
             inoutBuffers[1] = _sumBuf[1].ptr;
@@ -287,7 +327,7 @@ private:
             info.timeInFramesSinceThisEffectStarted = ec.framesSinceInit;
             info.userData                           = null;
 
-            ec.fx.processAudio(inoutBuffers, frames, info);
+            ec.fx.processAudio(inoutBuffers, frames, info); // apply effect
             ec.framesSinceInit += frames;
         }
         _masterEffectsMutex.unlock();
@@ -315,7 +355,8 @@ private:
             {
                 for (int channel = 0; channel < layout.channel_count; channel += 1) 
                 {
-                    float sample = channel >= 2 ? 0.0f : _sumBuf[channel][frame];
+                    import std.math;
+                    float sample = (channel >= 2) ? 0.0f : std.math.sin(cast(float)frame) * 0.25f;//_sumBuf[channel][frame];
                     write_sample_float32ne(areas[channel].ptr, 0);
                     areas[channel].ptr += areas[channel].step;
                 }
@@ -343,7 +384,16 @@ private:
 extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min, int frame_count_max)
 {
     Mixer mixer = cast(Mixer)(stream.userdata);
-    mixer.writeCallback(stream, frame_count_max);    
+
+
+    // Note: WASAPI can have 4 seconds buffers, so we return as frames as following:
+    //   - the highest nearest valid frame count in [frame_count_min .. frame_count_max] that is below 1024.
+
+    int frames = 1024;
+    if (frames < frame_count_min) frames = frame_count_min; 
+    if (frames > frame_count_max) frames = frame_count_max;
+
+    mixer.writeCallback(stream, frames);    
 }
 
 static void write_sample_s16ne(char* ptr, double sample) {

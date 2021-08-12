@@ -5,6 +5,7 @@ import gamemixer;
 
 void main()
 {
+    // Note: the whole API is available through `IMixer`.
     IMixer mixer = mixerCreate();
 
     mixer.addMasterEffect( mixer.createEffectCustom(&generateSine) );

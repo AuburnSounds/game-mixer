@@ -5,8 +5,10 @@ import dplug.core;
 nothrow:
 @nogc:
 
+// TODO: add an IParameter, and calls to get a list of them in IEffect
+
 /// Inherit from `IEffect` to make a custom effect.
-interface IEffect
+interface IAudioEffect
 {
 nothrow:
 @nogc:
@@ -30,7 +32,10 @@ struct EffectCallbackInfo
     void* userData; // only used for EffectCallback, null otherwise 
 }
 
-class EffectCallback : IEffect
+package:
+
+/// You can create custom effect from a function with `EffectCallback`.
+class EffectCallback : IAudioEffect
 {
 nothrow:
 @nogc:
