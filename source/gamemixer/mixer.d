@@ -47,6 +47,10 @@ nothrow:
 
     /// Adds an effect on the master channel (all sounds mixed together).
     void addMasterEffect(IEffect effect);
+
+    /// Creates an effect with a custom callback processing function.
+    /// (All effects get destroyed automatically when the IMixer is destroyed).
+    IEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
 }
 
 
@@ -148,8 +152,15 @@ public:
     override void addMasterEffect(IEffect effect)
     {
         _masterEffectsMutex.lock();
-        _masterEffects.pushBack(EffectContext(effect, ));
+        _masterEffects.pushBack(EffectContext(effect, false, 0));
         _masterEffectsMutex.unlock();
+    }
+
+    override IEffect createEffectCustom(EffectCallbackFunction callback, void* userData)
+    {
+        IEffect fx = mallocNew!EffectCallback(callback, userData);
+        _allCreatedEffects.pushBack(fx);
+        return fx;
     }
 
 private:
@@ -163,9 +174,12 @@ private:
     {
         IEffect fx;
         bool initialized;
+        long framesSinceInit;
     }
     Vec!EffectContext _masterEffects; // sync by _masterEffectsMutex
     UncheckedMutex _masterEffectsMutex;
+
+    Vec!IEffect _allCreatedEffects;
 
     bool _errored;
     const(char)[] _lastError;
@@ -228,13 +242,17 @@ private:
 
         _sumBuf[0].reallocBuffer(0);
         _sumBuf[1].reallocBuffer(0);
+
+        // Destroy all effects
+        foreach(fx; _allCreatedEffects)
+        {
+            destroyFree(fx);
+        }
+        _allCreatedEffects.clearContents();
     }
 
     void writeCallback(SoundIoOutStream* stream, int frames)
     {
-        enum sineAmplitude = 0.25f;
-        double float_sample_rate = stream.sample_rate;
-        double seconds_per_frame = 1.0 / float_sample_rate;
         SoundIoChannelArea* areas;
 
         if (frames > _sumBuf[0].length)
@@ -253,18 +271,24 @@ private:
         {
             if (!ec.initialized)
             {
-                ec.fx.beginPlaying(stream.sample_rate);
+                ec.fx.prepareToPlay(stream.sample_rate);
                 ec.initialized = true;
+                ec.framesSinceInit = 0;
             }
             
             // apply effect
             float*[2] inoutBuffers;
             inoutBuffers[0] = _sumBuf[0].ptr;
             inoutBuffers[1] = _sumBuf[1].ptr;
-            ec.fx.processAudio(inoutBuffers, frames, _framesElapsed);
+            
+            EffectCallbackInfo info;
+            info.sampleRate                         = stream.sample_rate;
+            info.timeInFramesSincePlaybackStarted   = _framesElapsed;
+            info.timeInFramesSinceThisEffectStarted = ec.framesSinceInit;
+            info.userData                           = null;
 
-            IEffect fx;
-            bool initialized;
+            ec.fx.processAudio(inoutBuffers, frames, info);
+            ec.framesSinceInit += frames;
         }
         _masterEffectsMutex.unlock();
 
@@ -292,7 +316,6 @@ private:
                 for (int channel = 0; channel < layout.channel_count; channel += 1) 
                 {
                     float sample = channel >= 2 ? 0.0f : _sumBuf[channel][frame];
-                    int outChan = channel % 2;
                     write_sample_float32ne(areas[channel].ptr, 0);
                     areas[channel].ptr += areas[channel].step;
                 }
