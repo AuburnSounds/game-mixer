@@ -5,12 +5,11 @@ import gamemixer;
 
 void main()
 {
-    // Note: the whole API is available through `IMixer`.
-    IMixer mixer = mixerCreate();
+    // The whole API is available through `IMixer` and the interfaces it may return.
+    IMixer mixer = mixerCreate(); // Create with defaults (48000Hz, 512 or 1024 samples of software latency).
 
     mixer.addMasterEffect( mixer.createEffectCustom(&addSinusoid) );
 
-    // Wait until keypress
     writeln("Press ENTER to end the playback...");
     readln();
     mixerDestroy(mixer); // this cleans up everything created through `mixer`.
@@ -27,8 +26,8 @@ void addSinusoid(float*[] inoutBuffer, int frames, EffectCallbackInfo info)
         float* buf = inoutBuffer[chan];
         for (int n = 0; n < frames; ++n)
         {
-            float FREQ = 110.0f;
-            double phase = ((info.timeInFramesSinceThisEffectStarted + n) * invSR) * 2 * PI * FREQ;
+            float FREQ = (chan % 2) ? 52.0f : 62.0f;
+            double phase = ((info.timeInFramesSincePlaybackStarted + n) * invSR) * 2 * PI * FREQ;
             buf[n] += 0.25f * sin(phase);
         }
     }

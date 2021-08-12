@@ -1,5 +1,6 @@
 module gamemixer.mixer;
 
+import core.thread;
 import core.atomic;
 import dplug.core;
 import soundio;
@@ -53,6 +54,10 @@ nothrow:
     /// (All effects get destroyed automatically when the IMixer is destroyed).
     IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
 
+    /// Creates an effect with a custom callback processing function.
+    /// (All effects get destroyed automatically when the IMixer is destroyed).
+    IAudioEffect createEffectGain();
+
     /// Create a source from file or memory.
     /// (All sources get destroyed automatically when the IMixer is destroyed).
     /// Returns: `null` if loading failed
@@ -60,6 +65,9 @@ nothrow:
 
     ///ditto
     IAudioSource createSourceFromMemoryFile(const(char[]) path);
+
+    /// Sets the volume of the master bus (volume should typically be between 0 and 1).
+    void setMasterVolume(float volume);
 }
 
 package:
@@ -128,6 +136,13 @@ public:
             return;
         }
 
+        _framesElapsed = 0;
+        _sampleRate = _outstream.sample_rate;
+
+        // The very last effect of the master chain is a global gain.
+        _masterGainPostFx = createEffectGain();
+        _masterGainPostFxContext.initialized = false;
+
         err = soundio_outstream_start(_outstream);
         if (err != 0)
         {
@@ -136,15 +151,18 @@ public:
         }
 
         // start event thread
-
-        _framesElapsed = 0;
-
         _eventThread = makeThread(&waitEvents);
-        _eventThread.start();       
+        _eventThread.start();
+
+    
     }
 
     ~this()
     {
+        setMasterVolume(0);
+
+        core.thread.Thread.sleep( dur!("msecs")( 200 ) );
+
         cleanUp();        
     }   
 
@@ -162,13 +180,21 @@ public:
     override void addMasterEffect(IAudioEffect effect)
     {
         _masterEffectsMutex.lock();
-        _masterEffects.pushBack(EffectContext(effect, false, 0));
+        _masterEffects.pushBack(effect);
+        _masterEffectsContexts.pushBack(EffectContext(false));
         _masterEffectsMutex.unlock();
     }
 
     override IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData)
     {
         IAudioEffect fx = mallocNew!EffectCallback(callback, userData);
+        _allCreatedEffects.pushBack(fx);
+        return fx;
+    }
+
+    override IAudioEffect createEffectGain()
+    {
+        IAudioEffect fx = mallocNew!EffectGain();
         _allCreatedEffects.pushBack(fx);
         return fx;
     }
@@ -203,24 +229,32 @@ public:
         }
     }
 
+    override void setMasterVolume(float volume)
+    {
+        _masterGainPostFx.parameter(0).setValue(volume);
+    }
+
 private:
     SoundIo* _soundio;
     SoundIoDevice* _device;
     SoundIoOutStream* _outstream;
-    Thread _eventThread;
+    dplug.core.thread.Thread _eventThread;
     long _framesElapsed;
+    float _sampleRate;
 
     static struct EffectContext
-    {
-        IAudioEffect fx;
+    {        
         bool initialized;
-        long framesSinceInit;
     }
-    Vec!EffectContext _masterEffects; // sync by _masterEffectsMutex
+    Vec!EffectContext _masterEffectsContexts; // sync by _masterEffectsMutex
+    Vec!IAudioEffect _masterEffects;
     UncheckedMutex _masterEffectsMutex;
 
     Vec!IAudioEffect _allCreatedEffects;
     Vec!IAudioSource _allCreatedSource;
+
+    IAudioEffect _masterGainPostFx;
+    EffectContext _masterGainPostFxContext;
 
     bool _errored;
     const(char)[] _lastError;
@@ -294,6 +328,8 @@ private:
 
     void writeCallback(SoundIoOutStream* stream, int frames)
     {
+        assert(stream.sample_rate == _sampleRate);
+
         SoundIoChannelArea* areas;
 
         if (frames > _sumBuf[0].length)
@@ -308,29 +344,15 @@ private:
 
         // 2. Apply master effects
         _masterEffectsMutex.lock();
-        foreach(ref EffectContext ec; _masterEffects[])
-        {
-            if (!ec.initialized)
-            {
-                ec.fx.prepareToPlay(stream.sample_rate);
-                ec.initialized = true;
-                ec.framesSinceInit = 0;
-            }
-            
-            float*[2] inoutBuffers;
-            inoutBuffers[0] = _sumBuf[0].ptr;
-            inoutBuffers[1] = _sumBuf[1].ptr;
-            
-            EffectCallbackInfo info;
-            info.sampleRate                         = stream.sample_rate;
-            info.timeInFramesSincePlaybackStarted   = _framesElapsed;
-            info.timeInFramesSinceThisEffectStarted = ec.framesSinceInit;
-            info.userData                           = null;
-
-            ec.fx.processAudio(inoutBuffers[0..2], frames, info); // apply effect
-            ec.framesSinceInit += frames;
+        int numMasterEffects = cast(int) _masterEffects.length;
+        for (int numFx = 0; numFx < numMasterEffects; ++numFx)
+        {            
+            applyEffect(_masterEffectsContexts[numFx], _masterEffects[numFx], frames);
         }
         _masterEffectsMutex.unlock();
+
+        // 3. Apply post gain effect
+        applyEffect(_masterGainPostFxContext, _masterGainPostFx, frames);
 
         _framesElapsed += frames;
 
@@ -373,6 +395,46 @@ private:
             frames_left -= frame_count;
             if (frames_left <= 0)
                 break;
+        }
+    }
+
+    void applyEffect(ref EffectContext ec, IAudioEffect effect, int frames)
+    {
+        enum int MAX_FRAMES_FOR_EFFECTS = 512;
+
+        if (!ec.initialized)
+        {
+            effect.prepareToPlay(_sampleRate, MAX_FRAMES_FOR_EFFECTS, 2);
+            ec.initialized = true;
+        }
+
+        float*[2] inoutBuffers;
+        inoutBuffers[0] = _sumBuf[0].ptr;
+        inoutBuffers[1] = _sumBuf[1].ptr;
+
+        EffectCallbackInfo info;
+        info.sampleRate                         = _sampleRate;
+        info.userData                           = null;
+
+        // Buffer-splitting! It is used so that effects experience a maximum buffer size at init point.
+        {
+            int framesDone = 0;
+            while (framesDone + MAX_FRAMES_FOR_EFFECTS <= frames)
+            {
+                info.timeInFramesSincePlaybackStarted   = _framesElapsed + framesDone;
+
+                effect.processAudio(inoutBuffers[0..2], MAX_FRAMES_FOR_EFFECTS, info); // apply effect
+                framesDone += MAX_FRAMES_FOR_EFFECTS;
+                inoutBuffers[0] += MAX_FRAMES_FOR_EFFECTS;
+                inoutBuffers[1] += MAX_FRAMES_FOR_EFFECTS;
+            }
+            assert(framesDone <= frames);
+            if (framesDone != frames)
+            {
+                int remain = frames - framesDone;
+                info.timeInFramesSincePlaybackStarted   = _framesElapsed + framesDone;
+                effect.processAudio(inoutBuffers[0..2], remain, info); // apply effect
+            }
         }
     }
 }
