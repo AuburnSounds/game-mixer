@@ -5,8 +5,6 @@ import dplug.core;
 nothrow:
 @nogc:
 
-// TODO: add an IParameter, and calls to get a list of them in IEffect
-
 /// Inherit from `IEffect` to make a custom effect.
 class IAudioEffect
 {
