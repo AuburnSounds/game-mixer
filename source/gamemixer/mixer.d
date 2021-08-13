@@ -31,7 +31,7 @@ void mixerDestroy(IMixer mixer)
 struct MixerOptions
 {
     float sampleRate = 48000.0f;
-    int tracks = 16;
+    int numChannels = 16; /// Number of possible sounds to play simultaneously.
 }
 
 /// Public API for the `Mixer` object.
@@ -39,13 +39,21 @@ interface IMixer
 {
 nothrow:
 @nogc:
-    /// Returns: `true` if a playback error has been detected.
-    ///          Your best bet is to recreate a `Mixer`.
-    bool isErrored();
 
-    /// Returns: An error message for the last error.
-    /// Warning: only call this if `isErrored()` returns `true`.
-    const(char)[] lastErrorString();
+    /// Create a source from file or memory.
+    /// (All sources get destroyed automatically when the IMixer is destroyed).
+    /// Returns: `null` if loading failed
+    IAudioSource createSourceFromMemory(const(ubyte[]) inputData);
+
+    ///ditto
+    IAudioSource createSourceFromFile(const(char[]) path);
+
+    /// Play a source on a channel.
+    /// -1 for the first free unreserved channel.
+    void play(IAudioSource source, float volume = 1.0f, int channel = -1);
+
+    /// Sets the volume of the master bus (volume should typically be between 0 and 1).
+    void setMasterVolume(float volume);
 
     /// Adds an effect on the master channel (all sounds mixed together).
     void addMasterEffect(IAudioEffect effect);
@@ -58,16 +66,13 @@ nothrow:
     /// (All effects get destroyed automatically when the IMixer is destroyed).
     IAudioEffect createEffectGain();
 
-    /// Create a source from file or memory.
-    /// (All sources get destroyed automatically when the IMixer is destroyed).
-    /// Returns: `null` if loading failed
-    IAudioSource createSourceFromMemory(const(ubyte[]) inputData);
+    /// Returns: `true` if a playback error has been detected.
+    ///          Your best bet is to recreate a `Mixer`.
+    bool isErrored();
 
-    ///ditto
-    IAudioSource createSourceFromMemoryFile(const(char[]) path);
-
-    /// Sets the volume of the master bus (volume should typically be between 0 and 1).
-    void setMasterVolume(float volume);
+    /// Returns: An error message for the last error.
+    /// Warning: only call this if `isErrored()` returns `true`.
+    const(char)[] lastErrorString();
 }
 
 package:
@@ -80,6 +85,8 @@ nothrow:
 public:
     this(MixerOptions options)
     {
+        _channels.resize(options.numChannels);
+        _channels.fill(ChannelStatus.init);
         _soundio = soundio_create();
         assert(_soundio !is null);
 
@@ -114,6 +121,7 @@ public:
         }
 
         _masterEffectsMutex = makeMutex();
+        _channelsMutex = makeMutex();
 
         _outstream = soundio_outstream_create(_device);
         _outstream.format = SoundIoFormatFloat32NE; // little endian floats
@@ -152,9 +160,7 @@ public:
 
         // start event thread
         _eventThread = makeThread(&waitEvents);
-        _eventThread.start();
-
-    
+        _eventThread.start();    
     }
 
     ~this()
@@ -214,7 +220,7 @@ public:
         }
     }
 
-    override IAudioSource createSourceFromMemoryFile(const(char[]) path)
+    override IAudioSource createSourceFromFile(const(char[]) path)
     {
         try
         {
@@ -232,6 +238,18 @@ public:
     override void setMasterVolume(float volume)
     {
         _masterGainPostFx.parameter(0).setValue(volume);
+    }
+
+    override void play(IAudioSource source, float volume = 1.0f, int channel = -1)
+    {
+        if (channel == -1)
+            channel = findFreeChannel();
+        if (channel == -1)
+            return; // no free channel
+        ChannelStatus* cs = &_channels[channel];
+        cs.sourcePlaying = source;
+        cs.paused = false;
+        cs.volume = volume;
     }
 
 private:
@@ -262,6 +280,31 @@ private:
     float[][2] _sumBuf;
 
     shared(bool) _shouldReadEvents = true;
+
+
+    static struct ChannelStatus
+    {       
+    nothrow:
+    @nogc:
+        IAudioSource sourcePlaying;
+        bool paused;
+        float volume;
+
+        bool isAvailable()
+        {
+            return sourcePlaying is null;
+        }
+    }
+    Vec!ChannelStatus _channels;
+    UncheckedMutex _channelsMutex;
+
+    int findFreeChannel()
+    {
+        for (int c = 0; c < _channels.length; ++c)
+            if (_channels[c].isAvailable())
+                return c;
+        return -1;
+    }
 
     void waitEvents()
     {
@@ -341,6 +384,23 @@ private:
         // 1. Mix sources in stereo.
         _sumBuf[0][0..frames] = 0;
         _sumBuf[1][0..frames] = 0;
+
+        _channelsMutex.lock(); // to protect from "play"
+        for (int n = 0; n < _channels.length; ++n)
+        {
+            ChannelStatus* cs = &_channels[n];
+            if (cs.sourcePlaying !is null)
+            {
+                bool terminated = false;
+                float*[2] inoutBuffers;
+                inoutBuffers[0] = _sumBuf[0].ptr;
+                inoutBuffers[1] = _sumBuf[1].ptr;
+                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.volume, terminated);
+                if (terminated)
+                    cs.sourcePlaying = null;
+            }
+        }
+        _channelsMutex.unlock();
 
         // 2. Apply master effects
         _masterEffectsMutex.lock();
