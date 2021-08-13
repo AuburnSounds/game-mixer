@@ -1,0 +1,9 @@
+{
+    "name": "drum-machine",
+
+    "dependencies":
+    {
+        "game-mixer": { "path": "../.."},
+        "turtle": ">=0.0.9 <1.0.0"
+    }
+}
