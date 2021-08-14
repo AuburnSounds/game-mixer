@@ -86,5 +86,11 @@ private:
     {
         return channels == 1 || channels == 2;
     }
+}
+
+
+// Responsibility: decode a stream, but in the target a 
+struct DecodedStream
+{
 
 }

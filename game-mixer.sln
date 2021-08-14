@@ -1,0 +1,33 @@
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{15F88752-C456-4F84-B1CC-F2D4B388DE09}") = "game-mixer", ".dub/game-mixer.visualdproj", "{6B0682A6-A6E1-4B4A-90D9-BAF10FEDC24E}"
+	ProjectSection(ProjectDependencies) = postProject
+		{EC139A9E-1FCF-4BA2-83D8-3B6E49762677} = {EC139A9E-1FCF-4BA2-83D8-3B6E49762677}
+		{B5045E9D-A62E-4F42-AB4E-E48BA9B3F6EF} = {B5045E9D-A62E-4F42-AB4E-E48BA9B3F6EF}
+		{9FB64D53-74B6-4A20-92D0-5D2B1795D6B4} = {9FB64D53-74B6-4A20-92D0-5D2B1795D6B4}
+	EndProjectSection
+EndProject
+Project("{15F88752-C456-4F84-B1CC-F2D4B388DE09}") = "dplug:core", ".dub/dplug_core.visualdproj", "{EC139A9E-1FCF-4BA2-83D8-3B6E49762677}"
+EndProject
+Project("{15F88752-C456-4F84-B1CC-F2D4B388DE09}") = "intel-intrinsics", ".dub/intel-intrinsics.visualdproj", "{B5045E9D-A62E-4F42-AB4E-E48BA9B3F6EF}"
+EndProject
+Project("{15F88752-C456-4F84-B1CC-F2D4B388DE09}") = "libsoundio-d", ".dub/libsoundio-d.visualdproj", "{9FB64D53-74B6-4A20-92D0-5D2B1795D6B4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		debug|x64 = debug|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6B0682A6-A6E1-4B4A-90D9-BAF10FEDC24E}.debug|x64.ActiveCfg = debug|x64
+		{6B0682A6-A6E1-4B4A-90D9-BAF10FEDC24E}.debug|x64.Build.0 = debug|x64
+		{B5045E9D-A62E-4F42-AB4E-E48BA9B3F6EF}.debug|x64.ActiveCfg = debug|x64
+		{B5045E9D-A62E-4F42-AB4E-E48BA9B3F6EF}.debug|x64.Build.0 = debug|x64
+		{EC139A9E-1FCF-4BA2-83D8-3B6E49762677}.debug|x64.ActiveCfg = debug|x64
+		{EC139A9E-1FCF-4BA2-83D8-3B6E49762677}.debug|x64.Build.0 = debug|x64
+		{9FB64D53-74B6-4A20-92D0-5D2B1795D6B4}.debug|x64.ActiveCfg = debug|x64
+		{9FB64D53-74B6-4A20-92D0-5D2B1795D6B4}.debug|x64.Build.0 = debug|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

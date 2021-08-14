@@ -1,0 +1,10 @@
+{
+    "name": "test-resampling",
+    "description": "Decode a WAV, resample, output a WAV.",
+    "license": "BSL-1.0",
+
+    "dependencies": 
+    {
+        "game-mixer": { "path": "../.." }
+    }
+}

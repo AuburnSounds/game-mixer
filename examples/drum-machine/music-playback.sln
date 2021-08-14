@@ -1,0 +1,44 @@
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "music-playback", ".dub/music-playback.visualdproj", "{048A678E-1DA2-40B1-96DC-9F0E54CD45EA}"
+	ProjectSection(ProjectDependencies) = postProject
+		{96A9BDDA-C39E-4503-8A97-2AB4F3ACEE56} = {96A9BDDA-C39E-4503-8A97-2AB4F3ACEE56}
+		{7E84CAB2-B012-4DB0-A232-9E34B1C40ADA} = {7E84CAB2-B012-4DB0-A232-9E34B1C40ADA}
+		{B5899D10-FD88-43FB-8659-D017DCB36DB7} = {B5899D10-FD88-43FB-8659-D017DCB36DB7}
+		{B5899D10-FD88-43FB-8659-D017DCB36DB7} = {B5899D10-FD88-43FB-8659-D017DCB36DB7}
+		{BF8EE8F2-FAE0-46FD-8DBB-8A7351822A32} = {BF8EE8F2-FAE0-46FD-8DBB-8A7351822A32}
+		{49DFA4EE-E556-4B93-B968-DE6DC4E322B4} = {49DFA4EE-E556-4B93-B968-DE6DC4E322B4}
+	EndProjectSection
+EndProject
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "game-mixer", ".dub/game-mixer.visualdproj", "{96A9BDDA-C39E-4503-8A97-2AB4F3ACEE56}"
+EndProject
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "audio-formats", ".dub/audio-formats.visualdproj", "{7E84CAB2-B012-4DB0-A232-9E34B1C40ADA}"
+EndProject
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "dplug:core", ".dub/dplug_core.visualdproj", "{B5899D10-FD88-43FB-8659-D017DCB36DB7}"
+EndProject
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "intel-intrinsics", ".dub/intel-intrinsics.visualdproj", "{BF8EE8F2-FAE0-46FD-8DBB-8A7351822A32}"
+EndProject
+Project("{DA715FA3-D600-49C2-B704-B9833D425516}") = "libsoundio-d", ".dub/libsoundio-d.visualdproj", "{49DFA4EE-E556-4B93-B968-DE6DC4E322B4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		debug|x64 = debug|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{96A9BDDA-C39E-4503-8A97-2AB4F3ACEE56}.debug|x64.ActiveCfg = debug|x64
+		{96A9BDDA-C39E-4503-8A97-2AB4F3ACEE56}.debug|x64.Build.0 = debug|x64
+		{7E84CAB2-B012-4DB0-A232-9E34B1C40ADA}.debug|x64.ActiveCfg = debug|x64
+		{7E84CAB2-B012-4DB0-A232-9E34B1C40ADA}.debug|x64.Build.0 = debug|x64
+		{BF8EE8F2-FAE0-46FD-8DBB-8A7351822A32}.debug|x64.ActiveCfg = debug|x64
+		{BF8EE8F2-FAE0-46FD-8DBB-8A7351822A32}.debug|x64.Build.0 = debug|x64
+		{B5899D10-FD88-43FB-8659-D017DCB36DB7}.debug|x64.ActiveCfg = debug|x64
+		{B5899D10-FD88-43FB-8659-D017DCB36DB7}.debug|x64.Build.0 = debug|x64
+		{49DFA4EE-E556-4B93-B968-DE6DC4E322B4}.debug|x64.ActiveCfg = debug|x64
+		{49DFA4EE-E556-4B93-B968-DE6DC4E322B4}.debug|x64.Build.0 = debug|x64
+		{048A678E-1DA2-40B1-96DC-9F0E54CD45EA}.debug|x64.ActiveCfg = debug|x64
+		{048A678E-1DA2-40B1-96DC-9F0E54CD45EA}.debug|x64.Build.0 = debug|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
