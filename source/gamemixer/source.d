@@ -6,6 +6,7 @@ import audioformats;
 nothrow:
 @nogc:
 
+// TODO: right sample rate and do not block on files...     
 
 /// Represent a music or a sample.
 interface IAudioSource
@@ -13,7 +14,7 @@ interface IAudioSource
 nothrow:
 @nogc:
     /// Add output of the source to this buffer, with volume as gain.
-    void mixIntoBuffer(float*[] inoutChannels, int frames, float volume, out bool terminated);
+    void mixIntoBuffer(float*[] inoutChannels, int frames, int frameOffset, float volume, out bool terminated);
 }
 
 package:
@@ -26,25 +27,115 @@ public:
     /// Create a source from file.
     this(const(char)[] path)
     {
-        stream.openFromFile(path);
-        assert( isChannelCountValid(stream.getNumChannels()) );
+        _decodedStream.initializeFromFile(path);
     }
 
     /// Create a source from memory data.
     this(const(ubyte)[] inputData)
     {
-        stream.openFromMemory(inputData);
-        assert( isChannelCountValid(stream.getNumChannels()) );
+        _decodedStream.initializeFromMemory(inputData);
     }
 
-    void mixIntoBuffer(float*[] inoutChannels, int frames, float volume, out bool terminated)
+    void mixIntoBuffer(float*[] inoutChannels, 
+                       int frames,
+                       int frameOffset,
+                       float volume, 
+                       out bool terminated)
     {
         assert(inoutChannels.length == 2);
+        try
+        {
+            _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, terminated); 
+        }
+        catch(Exception e)
+        {
+            // decoding error => silently doesn't play
+        }
+    }
 
-        // TODO: right sample rate and do not block on files...
+private:   
+    DecodedStream _decodedStream;
 
+}
+
+private:
+
+
+bool isChannelCountValid(int channels)
+{
+    return /*channels == 1 ||*/ channels == 2;
+}
+
+
+/// Decode a stream, keeps it in a buffer so that multiple playback are possible.
+struct DecodedStream
+{
+@nogc:
+    void initializeFromFile(const(char)[] path)
+    {
+        _lengthIsKnown = false;
+        _framesDecoded = 0;
+        _lengthInFrames = -1;
+        _stream.openFromFile(path);
+        assert( isChannelCountValid(_stream.getNumChannels()) );
+    }
+
+    void initializeFromMemory(const(ubyte)[] inputData)
+    {
+        _lengthIsKnown = false;
+        _framesDecoded = 0;
+        _lengthInFrames = -1;
+        _stream.openFromMemory(inputData);
+        assert( isChannelCountValid(_stream.getNumChannels()) );
+    }
+
+    void mixIntoBuffer(float*[] inoutChannels, 
+                       int frames,
+                       int frameOffset,
+                       float volume, 
+                       out bool terminated)
+    {
+        int framesEnd = frames + frameOffset;
+
+        if (_framesDecoded < framesEnd)
+        {
+            bool finished;
+            decodeMoreSamples(framesEnd - _framesDecoded, finished);
+        }
+
+        if (_lengthIsKnown)
+        {
+            if (frames >= _lengthInFrames)
+            {
+                terminated = true;
+                return;
+            }
+
+            if (framesEnd > lengthInFrames())
+                framesEnd = lengthInFrames();
+        }
+
+        int framesToCopy = framesEnd - frameOffset;
+
+        if (framesToCopy > 0)
+        {
+            float* decodedL = _decodedBuffers[0].ptr;
+            float* decodedR = _decodedBuffers[1].ptr;
+            inoutChannels[0][0..framesToCopy] += decodedL[frameOffset..framesEnd];
+            inoutChannels[1][0..framesToCopy] += decodedR[frameOffset..framesEnd];
+        }
+        inoutChannels[0][framesToCopy..frames] = 0.0f; 
+        inoutChannels[1][framesToCopy..frames] = 0.0f;
+
+        if (_lengthIsKnown)
+            terminated = (framesEnd == lengthInFrames());
+        else
+            terminated = false;
+    }
+
+    void decodeMoreSamples(int frames, out bool terminated) nothrow
+    {
         int framesDone = 0;
-
         while (framesDone < frames)
         {
             int chunk = 128;
@@ -56,41 +147,54 @@ public:
             int framesRead = 0;
             try
             {
-                framesRead = stream.readSamplesFloat(_readBuffer.ptr, chunk);
+                framesRead = _stream.readSamplesFloat(_readBuffer.ptr, chunk);
             }
             catch(Exception e)
             {
+                framesRead = 0;
                 destroyFree(e);
             }
 
             for (int n = 0; n < framesRead; ++n)
             {
-                inoutChannels[0][framesDone + n] += _readBuffer[2 * n + 0] * volume;
-                inoutChannels[1][framesDone + n] += _readBuffer[2 * n + 1] * volume;
+                _decodedBuffers[0].pushBack( _readBuffer[2 * n + 0] );
+                _decodedBuffers[1].pushBack( _readBuffer[2 * n + 1] );
             }
 
-            terminated = (framesRead != chunk);
-            if (terminated) 
-                break;
+            _framesDecoded += framesRead;
 
+            terminated = (framesRead != chunk);
+            if (terminated)
+            {
+                _lengthIsKnown = true;
+                assert(fullyDecoded());
+                break;
+            }
             framesDone += chunk;
         }
     }
 
-private:
-    AudioStream stream;
-
-    float[2 * 128] _readBuffer;
-
-    bool isChannelCountValid(int channels)
+    bool lengthIsKnown() nothrow
     {
-        return channels == 1 || channels == 2;
+        return _lengthIsKnown;
     }
-}
 
+    int lengthInFrames() nothrow
+    {
+        assert(lengthIsKnown());
+        return _lengthInFrames;
+    }
 
-// Responsibility: decode a stream, but in the target a 
-struct DecodedStream
-{
+    bool fullyDecoded() nothrow
+    {
+        return lengthIsKnown() && (_framesDecoded == _lengthInFrames);
+    }
 
+private:
+    bool _lengthIsKnown;
+    int _framesDecoded;
+    int _lengthInFrames;
+    float[2 * 128] _readBuffer;
+    AudioStream _stream;
+    Vec!float[2] _decodedBuffers;
 }

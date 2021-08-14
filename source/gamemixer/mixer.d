@@ -250,6 +250,7 @@ public:
         cs.sourcePlaying = source;
         cs.paused = false;
         cs.volume = volume;
+        cs.frameOffset = 0;
     }
 
 private:
@@ -289,6 +290,7 @@ private:
         IAudioSource sourcePlaying;
         bool paused;
         float volume;
+        int frameOffset;
 
         bool isAvailable()
         {
@@ -395,7 +397,8 @@ private:
                 float*[2] inoutBuffers;
                 inoutBuffers[0] = _sumBuf[0].ptr;
                 inoutBuffers[1] = _sumBuf[1].ptr;
-                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.volume, terminated);
+                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.frameOffset, cs.volume, terminated);
+                cs.frameOffset += frames;
                 if (terminated)
                     cs.sourcePlaying = null;
             }
