@@ -1,4 +1,4 @@
-module gamemixer.audioresampler;
+module gamemixer.resampler;
 
 /* simple resampler with variety of algorithms
 * based on the code by Christopher Snowhill
@@ -70,6 +70,37 @@ public:
             while (sampleCount() > 0) 
             {
                 output.pushBack(sampleFloat());
+                removeSample();
+            }
+        }
+    }
+
+    // Must feed zeroes if no more input.
+    alias PullModeGetSamplesCallback = void delegate(float* buf, int frames);
+
+    void nextBufferPullMode(scope PullModeGetSamplesCallback getSamples, float* output, int frames)
+    {
+        float[BufferSize] pulled;
+
+        int framesPulled = 0;
+        while (framesPulled < frames)
+        {
+            int N = freeCount();
+
+            getSamples(pulled.ptr, N);
+
+            // feed resampler
+            for(int n = 0; n < N; ++n)
+            {
+                writeSample(pulled[n]);
+            }
+
+            // get data out of resampler
+            while (sampleCount() > 0) 
+            {
+                float s = sampleFloat();
+                if (framesPulled < frames)
+                    output[framesPulled++] = s;
                 removeSample();
             }
         }
