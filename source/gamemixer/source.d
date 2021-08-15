@@ -46,11 +46,11 @@ public:
         _sampleRate = sampleRate;
     }
 
-    void mixIntoBuffer(float*[] inoutChannels, 
-                       int frames,
-                       int frameOffset,
-                       float volume, 
-                       out bool terminated)
+    override void mixIntoBuffer(float*[] inoutChannels, 
+                                int frames,
+                                int frameOffset,
+                                float volume, 
+                                out bool terminated)
     {
         assert(inoutChannels.length == 2);
         try
@@ -62,6 +62,18 @@ public:
             // decoding error => silently doesn't play
         }
     }
+
+    // Not working, and should be useless soon
+   /* override void preload()
+    {
+        while(true)
+        {
+            bool finished;
+            _decodedStream.decodeMoreSamples(1024, 48000, finished);
+            if (finished)
+                return;
+        }
+    } */
 
 private:   
     DecodedStream _decodedStream;
@@ -88,6 +100,7 @@ struct DecodedStream
         _sourceLengthInFrames = -1;
         _streamIsTerminated = false;
         _stream.openFromFile(path);
+        _resamplersInitialized = false;
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
 
@@ -98,6 +111,7 @@ struct DecodedStream
         _sourceLengthInFrames = -1;
         _streamIsTerminated = false;
         _stream.openFromMemory(inputData);
+        _resamplersInitialized = false;
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
 
@@ -108,6 +122,14 @@ struct DecodedStream
                        float sampleRate, // will not change across calls
                        out bool terminated)
     {
+        // Initialize resamplers lazily
+        if (!_resamplersInitialized)
+        {
+            _resamplers[0].initialize(_stream.getSamplerate(), sampleRate);
+            _resamplers[1].initialize(_stream.getSamplerate(), sampleRate);
+            _resamplersInitialized = true;
+        }
+
         int framesEnd = frames + frameOffset;
 
         // need to decoder further?
@@ -223,7 +245,8 @@ struct DecodedStream
             {
                 framesDecoded = _stream.readSamplesFloat(_rawDecodeSamples.ptr, CHUNK_FRAMES_DECODER);
                 _streamIsTerminated = framesDecoded != CHUNK_FRAMES_DECODER;
-                _flushResamplingOutput = true;
+                if (_streamIsTerminated)
+                    _flushResamplingOutput = true; // small state machine
             }
             catch(Exception e)
             {
@@ -233,7 +256,7 @@ struct DecodedStream
             }
 
             // Deinterleave
-            for (int n = 0; n < _streamIsTerminated; ++n)
+            for (int n = 0; n < framesDecoded; ++n)
             {
                 _rawDecodeSamplesDeinterleaved[0][n] = _rawDecodeSamples[2 * n];
                 _rawDecodeSamplesDeinterleaved[1][n] = _rawDecodeSamples[2 * n + 1];
@@ -272,6 +295,7 @@ private:
     int _sourceLengthInFrames;      // Length of the resampled source in frames.
     bool _streamIsTerminated;       // Whether the stream has finished decoding.
     bool _flushResamplingOutput;    // Add a few silent sample at the end of decoder output.
+    bool _resamplersInitialized;    // true if resampler initialized.
 
     enum CHUNK_FRAMES_DECODER = 128; // PERF: tune that, while decoding a long MP3.
     
