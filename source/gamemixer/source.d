@@ -84,8 +84,9 @@ struct DecodedStream
     void initializeFromFile(const(char)[] path)
     {
         _lengthIsKnown = false;
-        _framesDecoded = 0;
-        _lengthInFrames = -1;
+        _framesDecodedAndResampled = 0;
+        _sourceLengthInFrames = -1;
+        _streamIsTerminated = false;
         _stream.openFromFile(path);
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
@@ -93,8 +94,9 @@ struct DecodedStream
     void initializeFromMemory(const(ubyte)[] inputData)
     {
         _lengthIsKnown = false;
-        _framesDecoded = 0;
-        _lengthInFrames = -1;
+        _framesDecodedAndResampled = 0;
+        _sourceLengthInFrames = -1;
+        _streamIsTerminated = false;
         _stream.openFromMemory(inputData);
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
@@ -108,20 +110,24 @@ struct DecodedStream
     {
         int framesEnd = frames + frameOffset;
 
-        if (_framesDecoded < framesEnd)
+        // need to decoder further?
+        if (_framesDecodedAndResampled < framesEnd)
         {
             bool finished;
-            decodeMoreSamples(framesEnd - _framesDecoded, sampleRate, finished);
+            decodeMoreSamples(framesEnd - _framesDecodedAndResampled, sampleRate, finished);
         }
 
         if (_lengthIsKnown)
         {
-            if (frames >= _lengthInFrames)
+            if (frames >= _sourceLengthInFrames) 
             {
+                // if we are asking for samples past starting point, 
+                // this means we have finished mixing this source
                 terminated = true;
-                return;
+                return; // nothing to mix
             }
 
+            // limit mixing to existing samples.
             if (framesEnd > lengthInFrames())
                 framesEnd = lengthInFrames();
         }
@@ -130,11 +136,14 @@ struct DecodedStream
 
         if (framesToCopy > 0)
         {
+            // mix into target buffer
             float* decodedL = _decodedBuffers[0].ptr;
             float* decodedR = _decodedBuffers[1].ptr;
             inoutChannels[0][0..framesToCopy] += decodedL[frameOffset..framesEnd];
             inoutChannels[1][0..framesToCopy] += decodedR[frameOffset..framesEnd];
         }
+        
+        // fills the rest with zeroes
         inoutChannels[0][framesToCopy..frames] = 0.0f; 
         inoutChannels[1][framesToCopy..frames] = 0.0f;
 
@@ -144,45 +153,42 @@ struct DecodedStream
             terminated = false;
     }
 
+    // Decode in the stream buffers at least `frames` more frames.
+    // Can possibly decode more than that.
     void decodeMoreSamples(int frames, float sampleRate, out bool terminated) nothrow
-    {
+    {        
         int framesDone = 0;
         while (framesDone < frames)
         {
-            int chunk = CHUNK_FRAMES_RESAMPLED;
-            if (frames - framesDone < CHUNK_FRAMES_RESAMPLED)
-            {
-                chunk = frames - framesDone;
-            }
+            bool terminatedResampling = false;
 
-            int framesRead = 0;
-            try
-            {
-                framesRead = readFromStreamAndResample(chunk, sampleRate);
-            }
-            catch(Exception e)
-            {
-                framesRead = 0;
-                destroyFree(e);
-            }
-
+            // Decode any number of frames.
+            // Return those in _resampledBuffer.   
+            int framesRead = readFromStreamAndResample(sampleRate, terminatedResampling);
+           
+            // Store these new frames in _decodedBuffers.
             for (int n = 0; n < framesRead; ++n)
             {
-                _decodedBuffers[0].pushBack( _resampledBuffer[0][n] );
-                _decodedBuffers[1].pushBack( _resampledBuffer[0][n] );
+                // PERF: could as well push resampled audio directly in _decodedBuffers
+                _decodedBuffers[0].pushBack( _resampledBuffer[0][n] ); 
+                _decodedBuffers[1].pushBack( _resampledBuffer[1][n] );
             }
 
-            _framesDecoded += framesRead;
+            _framesDecodedAndResampled += framesRead;
 
-            terminated = (framesRead != chunk);
+            terminated = terminatedResampling;
+
             if (terminated)
             {
                 _lengthIsKnown = true;
+                _sourceLengthInFrames = _framesDecodedAndResampled;
                 assert(fullyDecoded());
                 break;
             }
-            framesDone += chunk;
+            framesDone += framesRead;
         }
+
+        assert(framesDone >= frames);
     }
 
     bool lengthIsKnown() nothrow
@@ -193,34 +199,86 @@ struct DecodedStream
     int lengthInFrames() nothrow
     {
         assert(lengthIsKnown());
-        return _lengthInFrames;
+        return _sourceLengthInFrames;
     }
 
     bool fullyDecoded() nothrow
     {
-        return lengthIsKnown() && (_framesDecoded == _lengthInFrames);
+        return lengthIsKnown() && (_framesDecodedAndResampled == _sourceLengthInFrames);
     }
 
-    /// Read from stream. Return as much frames as possible. 
-    /// Return less than `requestedFrames` if stream is finished.
-    int readFromStreamAndResample(int requestedFrames, float sampleRate)
+    /// Read from stream. Can return any number of frames.
+    /// Note that "terminated" is not the stream being terminated, but the _resampling output_ being terminated.
+    int readFromStreamAndResample(float sampleRate, out bool terminated) nothrow
     {
+        _resampledBuffer[0].clearContents();
+        _resampledBuffer[1].clearContents();
 
-        // TODO
-        // this needs multi-channel resampler...
-        assert(false);
+        // Get more input
+        int framesDecoded;
+        if (!_streamIsTerminated)
+        {
+            // Read input   
+            try
+            {
+                framesDecoded = _stream.readSamplesFloat(_rawDecodeSamples.ptr, CHUNK_FRAMES_DECODER);
+                _streamIsTerminated = framesDecoded != CHUNK_FRAMES_DECODER;
+                _flushResamplingOutput = true;
+            }
+            catch(Exception e)
+            {
+                framesDecoded = 0;
+                _streamIsTerminated = true;
+                destroyFree(e);
+            }
+
+            // Deinterleave
+            for (int n = 0; n < _streamIsTerminated; ++n)
+            {
+                _rawDecodeSamplesDeinterleaved[0][n] = _rawDecodeSamples[2 * n];
+                _rawDecodeSamplesDeinterleaved[1][n] = _rawDecodeSamples[2 * n + 1];
+            }
+        }
+        else if (_flushResamplingOutput)
+        {
+            _flushResamplingOutput = false;
+
+            // Fills with a few empty samples in order to flush the resampler output.
+            framesDecoded = 128;
+            for (int n = 0; n < framesDecoded; ++n)
+            {
+                _rawDecodeSamplesDeinterleaved[0][n] = 0;
+                _rawDecodeSamplesDeinterleaved[1][n] = 0;
+            }
+        }
+        else
+        {
+            // This is really terminated. No more output form the resampler.
+            terminated = true;
+            return 0;
+        }
+
+        _resamplers[0].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[0].ptr, framesDecoded, _resampledBuffer[0]);
+        _resamplers[1].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[1].ptr, framesDecoded, _resampledBuffer[1]);
+
+        // should return same amount of samples
+        assert(_resampledBuffer[0].length == _resampledBuffer[1].length);
+        return cast(int) _resampledBuffer[0].length;
     }
 
 private:
-    bool _lengthIsKnown;
-    int _framesDecoded;
-    int _lengthInFrames;
+    bool _lengthIsKnown;            // true if _sourceLengthInFrames is known.
+    int _framesDecodedAndResampled; // Current number of decoded and resampled frames in _decodedBuffers.
+    int _sourceLengthInFrames;      // Length of the resampled source in frames.
+    bool _streamIsTerminated;       // Whether the stream has finished decoding.
+    bool _flushResamplingOutput;    // Add a few silent sample at the end of decoder output.
 
-    enum CHUNK_FRAMES_RESAMPLED = 128; // PERF: tune that, while decoding a long MP3.
-
-    float[CHUNK_FRAMES_RESAMPLED][2] _resampledBuffer;
+    enum CHUNK_FRAMES_DECODER = 128; // PERF: tune that, while decoding a long MP3.
+    
     AudioStream _stream;
-    Vec!float[2] _decodedBuffers;
-
     AudioResampler[2] _resamplers;
+    Vec!float[2] _decodedBuffers; // decoded and resampled whole audio    
+    float[CHUNK_FRAMES_DECODER*2] _rawDecodeSamples; // interleaved samples from decoder
+    float[CHUNK_FRAMES_DECODER][2] _rawDecodeSamplesDeinterleaved; // deinterleaved samples from decoder
+    Vec!float[2] _resampledBuffer; // resampled scratch buffer
 }
