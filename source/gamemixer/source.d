@@ -3,6 +3,8 @@ module gamemixer.source;
 import dplug.core;
 import audioformats;
 
+import gamemixer.resampler;
+
 nothrow:
 @nogc:
 
@@ -13,6 +15,9 @@ interface IAudioSource
 {
 nothrow:
 @nogc:
+    /// Called before an IAudioSource is played on a mixer channel.
+    void prepareToPlay(float sampleRate);
+
     /// Add output of the source to this buffer, with volume as gain.
     void mixIntoBuffer(float*[] inoutChannels, int frames, int frameOffset, float volume, out bool terminated);
 }
@@ -36,6 +41,11 @@ public:
         _decodedStream.initializeFromMemory(inputData);
     }
 
+    override void prepareToPlay(float sampleRate)
+    {
+        _sampleRate = sampleRate;
+    }
+
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames,
                        int frameOffset,
@@ -45,7 +55,7 @@ public:
         assert(inoutChannels.length == 2);
         try
         {
-            _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, terminated); 
+            _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated); 
         }
         catch(Exception e)
         {
@@ -55,7 +65,7 @@ public:
 
 private:   
     DecodedStream _decodedStream;
-
+    float _sampleRate;
 }
 
 private:
@@ -93,6 +103,7 @@ struct DecodedStream
                        int frames,
                        int frameOffset,
                        float volume, 
+                       float sampleRate, // will not change across calls
                        out bool terminated)
     {
         int framesEnd = frames + frameOffset;
@@ -100,7 +111,7 @@ struct DecodedStream
         if (_framesDecoded < framesEnd)
         {
             bool finished;
-            decodeMoreSamples(framesEnd - _framesDecoded, finished);
+            decodeMoreSamples(framesEnd - _framesDecoded, sampleRate, finished);
         }
 
         if (_lengthIsKnown)
@@ -133,13 +144,13 @@ struct DecodedStream
             terminated = false;
     }
 
-    void decodeMoreSamples(int frames, out bool terminated) nothrow
+    void decodeMoreSamples(int frames, float sampleRate, out bool terminated) nothrow
     {
         int framesDone = 0;
         while (framesDone < frames)
         {
-            int chunk = 128;
-            if (frames - framesDone < 128)
+            int chunk = CHUNK_FRAMES_RESAMPLED;
+            if (frames - framesDone < CHUNK_FRAMES_RESAMPLED)
             {
                 chunk = frames - framesDone;
             }
@@ -147,7 +158,7 @@ struct DecodedStream
             int framesRead = 0;
             try
             {
-                framesRead = _stream.readSamplesFloat(_readBuffer.ptr, chunk);
+                framesRead = readFromStreamAndResample(chunk, sampleRate);
             }
             catch(Exception e)
             {
@@ -157,8 +168,8 @@ struct DecodedStream
 
             for (int n = 0; n < framesRead; ++n)
             {
-                _decodedBuffers[0].pushBack( _readBuffer[2 * n + 0] );
-                _decodedBuffers[1].pushBack( _readBuffer[2 * n + 1] );
+                _decodedBuffers[0].pushBack( _resampledBuffer[0][n] );
+                _decodedBuffers[1].pushBack( _resampledBuffer[0][n] );
             }
 
             _framesDecoded += framesRead;
@@ -190,11 +201,26 @@ struct DecodedStream
         return lengthIsKnown() && (_framesDecoded == _lengthInFrames);
     }
 
+    /// Read from stream. Return as much frames as possible. 
+    /// Return less than `requestedFrames` if stream is finished.
+    int readFromStreamAndResample(int requestedFrames, float sampleRate)
+    {
+
+        // TODO
+        // this needs multi-channel resampler...
+        assert(false);
+    }
+
 private:
     bool _lengthIsKnown;
     int _framesDecoded;
     int _lengthInFrames;
-    float[2 * 128] _readBuffer;
+
+    enum CHUNK_FRAMES_RESAMPLED = 128; // PERF: tune that, while decoding a long MP3.
+
+    float[CHUNK_FRAMES_RESAMPLED][2] _resampledBuffer;
     AudioStream _stream;
     Vec!float[2] _decodedBuffers;
+
+    AudioResampler[2] _resamplers;
 }

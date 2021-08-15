@@ -251,6 +251,7 @@ public:
         cs.paused = false;
         cs.volume = volume;
         cs.frameOffset = 0;
+        source.prepareToPlay(_sampleRate);
     }
 
 private:
