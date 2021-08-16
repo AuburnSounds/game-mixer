@@ -81,6 +81,7 @@ struct DecodedStream
         _sourceLengthInFrames = -1;
         _streamIsTerminated = false;
         _stream = mallocNew!BufferedStream(path);
+        _channels = _stream.getNumChannels();
         _resamplersInitialized = false;
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
@@ -111,8 +112,8 @@ struct DecodedStream
         // Initialize resamplers lazily
         if (!_resamplersInitialized)
         {
-            _resamplers[0].initialize(_stream.getSamplerate(), sampleRate);
-            _resamplers[1].initialize(_stream.getSamplerate(), sampleRate);
+            for (int chan = 0; chan < 2; ++chan)
+                _resamplers[chan].initialize(_stream.getSamplerate(), sampleRate);
             _resamplersInitialized = true;
         }
 
@@ -144,16 +145,20 @@ struct DecodedStream
 
         if (framesToCopy > 0)
         {
-            // mix into target buffer
-            float* decodedL = _decodedBuffers[0].ptr;
-            float* decodedR = _decodedBuffers[1].ptr;
-            inoutChannels[0][0..framesToCopy] += decodedL[frameOffset..framesEnd] * volume;
-            inoutChannels[1][0..framesToCopy] += decodedR[frameOffset..framesEnd] * volume;
+            // mix into target buffer, upmix mono if needed
+            for (int chan = 0; chan < 2; ++chan)
+            {            
+                int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
+                float* decoded = _decodedBuffers[sourceChan].ptr;
+                inoutChannels[chan][0..framesToCopy] += decoded[frameOffset..framesEnd] * volume;
+            }
         }
         
         // fills the rest with zeroes
-        inoutChannels[0][framesToCopy..frames] = 0.0f; 
-        inoutChannels[1][framesToCopy..frames] = 0.0f;
+        for (int chan = 0; chan < 2; ++chan)
+        {
+            inoutChannels[chan][framesToCopy..frames] = 0.0f;
+        }
 
         if (_lengthIsKnown)
             terminated = (framesEnd == lengthInFrames());
@@ -233,8 +238,10 @@ struct DecodedStream
             // Deinterleave
             for (int n = 0; n < framesDecoded; ++n)
             {
-                _rawDecodeSamplesDeinterleaved[0][n] = _rawDecodeSamples[2 * n];
-                _rawDecodeSamplesDeinterleaved[1][n] = _rawDecodeSamples[2 * n + 1];
+                for (int chan = 0; chan < _channels; ++chan)
+                {
+                    _rawDecodeSamplesDeinterleaved[chan][n] = _rawDecodeSamples[_channels * n + chan];
+                }
             }
         }
         else if (_flushResamplingOutput)
@@ -243,10 +250,13 @@ struct DecodedStream
 
             // Fills with a few empty samples in order to flush the resampler output.
             framesDecoded = 128;
-            for (int n = 0; n < framesDecoded; ++n)
+
+            for (int chan = 0; chan < _channels; ++chan)
             {
-                _rawDecodeSamplesDeinterleaved[0][n] = 0;
-                _rawDecodeSamplesDeinterleaved[1][n] = 0;
+                for (int n = 0; n < framesDecoded; ++n)
+                {
+                    _rawDecodeSamplesDeinterleaved[chan][n] = 0;
+                }
             }
         }
         else
@@ -257,19 +267,25 @@ struct DecodedStream
         }
 
         size_t before = _decodedBuffers[0].length;
-        _resamplers[0].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[0].ptr, framesDecoded, _decodedBuffers[0]);
-        _resamplers[1].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[1].ptr, framesDecoded, _decodedBuffers[1]);
+        for (int chan = 0; chan < _channels; ++chan)
+        {
+            _resamplers[chan].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[chan].ptr, framesDecoded, _decodedBuffers[chan]);
+        }
         size_t after = _decodedBuffers[0].length;
 
-        // should return same amount of samples
-        assert(_decodedBuffers[0].length == _decodedBuffers[1].length);
+        // should return same amount of samples for all channels
+        if (_channels > 1)
+        {
+            assert(_decodedBuffers[0].length == _decodedBuffers[1].length);
+        }
         return cast(int) (after - before);
     }
 
 private:
-    bool _lengthIsKnown;            // true if _sourceLengthInFrames is known.
+    int _channels;
     int _framesDecodedAndResampled; // Current number of decoded and resampled frames in _decodedBuffers.
     int _sourceLengthInFrames;      // Length of the resampled source in frames.
+    bool _lengthIsKnown;            // true if _sourceLengthInFrames is known.
     bool _streamIsTerminated;       // Whether the stream has finished decoding.
     bool _flushResamplingOutput;    // Add a few silent sample at the end of decoder output.
     bool _resamplersInitialized;    // true if resampler initialized.

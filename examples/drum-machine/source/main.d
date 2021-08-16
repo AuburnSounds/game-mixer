@@ -72,7 +72,11 @@ class DrumMachineExample : TurtleGame
         if (step < 0 || track < 0 || step >= numStepsInLoop || track >= numTracks)
             return;
 
-        _steps[track][step] = !_steps[track][step];
+        if (button == MouseButton.left)
+            _steps[track][step] = !_steps[track][step];
+        else if (button == MouseButton.right)
+            _mixer.play(_samples[track], 0.5f);
+
     }
 
     override void draw()
