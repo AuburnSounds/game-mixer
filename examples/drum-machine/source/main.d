@@ -12,6 +12,7 @@ int main(string[] args)
 
 enum int numTracks = 6;
 enum int numStepsInLoop = 16;
+enum double BPM = 120.0;
 
 enum Sounds
 {
@@ -28,8 +29,7 @@ static immutable string[numTracks] paths =
 
 
 class DrumMachineExample : TurtleGame
-{
-    
+{   
     override void load()
     {
         // Having a clear color with an alpha value different from 255 
@@ -50,7 +50,22 @@ class DrumMachineExample : TurtleGame
     {
         if (keyboard.isDown("escape")) exitGame;
 
-        // TODO play sounds here
+        double playbackTimeSinceStart = _mixer.playbackTimeInSeconds();
+
+        // Which step are we in?
+        int curstep = cast(int)( BPM * (playbackTimeSinceStart / 60.0) * (numStepsInLoop / 4) );
+        curstep = curstep % numStepsInLoop;
+        assert(curstep >= 0 && curstep < numStepsInLoop);
+
+        if ((_oldStep != -1) && (_oldStep != curstep))
+        {
+            for (int track = 0; track < numTracks; ++track)
+            {
+                if (_steps[track][curstep])
+                    _mixer.play(_samples[track], 0.5f, track);   
+            }
+        }
+        _oldStep = curstep;
     }
 
     override void resized(float width, float height)
@@ -75,8 +90,7 @@ class DrumMachineExample : TurtleGame
         if (button == MouseButton.left)
             _steps[track][step] = !_steps[track][step];
         else if (button == MouseButton.right)
-            _mixer.play(_samples[track], 0.5f);
-
+            _mixer.play(_samples[track], 0.5f, track);
     }
 
     override void draw()
@@ -94,12 +108,21 @@ class DrumMachineExample : TurtleGame
                 float posx = W / 2 + (-numStepsInLoop*0.5f + step) * _padSize;
                 float posy = H / 2 + (-numTracks*0.5f + track) * _padSize;
 
-                if (_steps[track][step])
-                    canvas.fillStyle = "white";
-                else
-                    canvas.fillStyle = "grey";
-                canvas.fillRect(posx, posy, _padSize * 0.9f, _padSize * 0.9f);
+                bool intense = _steps[track][step] != 0;
+                bool yellow = step == _oldStep;
 
+                RGBA color;
+                if (intense)
+                {
+                    color = yellow ? RGBA(255, 255, 100, 255) : RGBA(200, 200, 200, 255);
+                }
+                else
+                {
+                    color = yellow ? RGBA(128, 128, 50, 255) : RGBA(100, 100, 100, 255);
+                }
+
+                canvas.fillStyle = color;
+                canvas.fillRect(posx, posy, _padSize * 0.9f, _padSize * 0.9f);
             }
         }        
     }
@@ -108,6 +131,8 @@ private:
     IMixer _mixer;
     IAudioSource[numTracks] _samples;
     float _padSize;
+
+    int _oldStep = -1;
 
     int[numStepsInLoop][numTracks] _steps =
     [
