@@ -34,6 +34,25 @@ struct MixerOptions
     int numChannels = 16; /// Number of possible sounds to play simultaneously.
 }
 
+enum anyMixerChannel = -1;
+
+/// Options when playing a source.
+struct PlayOptions
+{
+    /// The channel where to play the source.
+    /// `anyMixerChannel` for the first free unreserved channel.
+    int channel = anyMixerChannel;
+
+    /// The volume to play the source with.
+    float volume = 1.0f;
+
+    /// The delay in seconds before which to play.
+    /// The time reference is the time given by `playbackTimeInSeconds()`.
+    /// The source starts playing when `playbackTimeInSeconds` has increased by `delayBeforePlay`.
+    /// Note that it still occupies the channel.
+    float delayBeforePlay;
+}
+
 /// Public API for the `Mixer` object.
 interface IMixer
 {
@@ -49,8 +68,8 @@ nothrow:
     IAudioSource createSourceFromFile(const(char[]) path);
 
     /// Play a source on a channel.
-    /// -1 for the first free unreserved channel.
-    void play(IAudioSource source, float volume = 1.0f, int channel = -1);
+    void play(IAudioSource source, PlayOptions options);
+    void play(IAudioSource source, float volume = 1.0f);
 
     /// Sets the volume of the master bus (volume should typically be between 0 and 1).
     void setMasterVolume(float volume);
@@ -61,6 +80,15 @@ nothrow:
     /// Creates an effect with a custom callback processing function.
     /// (All effects get destroyed automatically when the IMixer is destroyed).
     IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
+
+    /// Returns: Time in seconds since the beginning of playback. 
+    /// This is equal to `getTimeInFrames() / getSampleRate() - latency`.
+    /// Warning: Because this subtract known latency, this can return a negative value.
+    /// BUG: latency reported of libsoundio is terrible.
+    double playbackTimeInSeconds();
+
+    /// Returns: Playback sample rate.
+    float getSampleRate();
 
     /// Creates an effect with a custom callback processing function.
     /// (All effects get destroyed automatically when the IMixer is destroyed).
@@ -145,7 +173,12 @@ public:
         }
 
         _framesElapsed = 0;
+        _timeSincePlaybackBegan = 0;
         _sampleRate = _outstream.sample_rate;
+
+        // TODO: do something better in WASAPI
+        //       do something better when latency reporting works
+        _softwareLatency = (maxInternalBuffering / _sampleRate);
 
         // The very last effect of the master chain is a global gain.
         _masterGainPostFx = createEffectGain();
@@ -170,7 +203,25 @@ public:
         core.thread.Thread.sleep( dur!("msecs")( 200 ) );
 
         cleanUp();        
-    }   
+    }
+
+    /// Returns: Time in seconds since the beginning of playback. 
+    /// This is equal to `getTimeInFrames() / getSampleRate() - softwareLatency()`.
+    /// Warning: This is returned with some amount of latency.
+    override double playbackTimeInSeconds()
+    {
+        double sr = getSampleRate();
+        long t = playbackTimeInFrames();
+        return t / sr - _softwareLatency;
+    }
+
+
+
+    /// Returns: Playback sample rate.
+    override float getSampleRate()
+    {
+        return _sampleRate;
+    }
 
     override bool isErrored()
     {
@@ -240,18 +291,33 @@ public:
         _masterGainPostFx.parameter(0).setValue(volume);
     }
 
-    override void play(IAudioSource source, float volume = 1.0f, int channel = -1)
+    override void play(IAudioSource source, float volume)
     {
-        if (channel == -1)
-            channel = findFreeChannel();
-        if (channel == -1)
+        PlayOptions opt;
+        opt.volume = volume;
+        play(source, opt);
+    }
+
+    override void play(IAudioSource source, PlayOptions options)
+    {
+        int chan = options.channel;
+        if (chan == -1)
+            chan = findFreeChannel();
+        if (chan == -1)
             return; // no free channel
-        ChannelStatus* cs = &_channels[channel];
+        ChannelStatus* cs = &_channels[chan];
         cs.sourcePlaying = source;
         cs.paused = false;
-        cs.volume = volume;
-        cs.frameOffset = 0;
+        cs.volume = options.volume;
+
+        int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
+        cs.frameOffset = -delayBeforePlayFrames;
         source.prepareToPlay(_sampleRate);
+    }
+
+    long playbackTimeInFrames()
+    {
+        return atomicLoad(_timeSincePlaybackBegan);
     }
 
 private:
@@ -260,7 +326,9 @@ private:
     SoundIoOutStream* _outstream;
     dplug.core.thread.Thread _eventThread;
     long _framesElapsed;
+    shared(long) _timeSincePlaybackBegan;
     float _sampleRate;
+    double _softwareLatency;
 
     static struct EffectContext
     {        
@@ -291,7 +359,7 @@ private:
         IAudioSource sourcePlaying;
         bool paused;
         float volume;
-        int frameOffset;
+        int frameOffset; // where in the source we are playing, can be negative (for zeroes)
 
         bool isAvailable()
         {
@@ -384,6 +452,8 @@ private:
             _sumBuf[1].reallocBuffer(frames);
         }
 
+        // TODO: trigger sources that have been programmed to play
+
         // 1. Mix sources in stereo.
         _sumBuf[0][0..frames] = 0;
         _sumBuf[1][0..frames] = 0;
@@ -419,6 +489,8 @@ private:
         applyEffect(_masterGainPostFxContext, _masterGainPostFx, frames);
 
         _framesElapsed += frames;
+
+        atomicStore(_timeSincePlaybackBegan, _framesElapsed);
 
         // 2. Pass the audio to libsoundio
 
@@ -503,8 +575,9 @@ private:
     }
 }
 
-
 private:
+
+enum int maxInternalBuffering = 1024; // Allows to lower latency with WASAPI
 
 extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min, int frame_count_max)
 {
@@ -514,7 +587,7 @@ extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min,
     // Note: WASAPI can have 4 seconds buffers, so we return as frames as following:
     //   - the highest nearest valid frame count in [frame_count_min .. frame_count_max] that is below 1024.
 
-    int frames = 1024;
+    int frames = maxInternalBuffering;
     if (frames < frame_count_min) frames = frame_count_min; 
     if (frames > frame_count_max) frames = frame_count_max;
 

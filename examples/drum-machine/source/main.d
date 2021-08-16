@@ -27,7 +27,10 @@ enum Sounds
 static immutable string[numTracks] paths = 
     ["kick.wav", "hihat.wav", "openhat.wav", "snare.wav", "cowbell.wav", "wood.wav"];
 
+// Note: game-mixer is not really appropriate to make a drum-machine.
+// Note would need to be triggered in an audio thread callback not in graphics animation.
 
+// A simple drum machine example
 class DrumMachineExample : TurtleGame
 {   
     override void load()
@@ -36,7 +39,9 @@ class DrumMachineExample : TurtleGame
         // will result in a cheap motion blur.
         setBackgroundColor( color("#202020") );
 
-        _mixer = mixerCreate();
+        MixerOptions options;
+        options.numChannels = 32;
+        _mixer = mixerCreate(options);
         foreach(n; 0..numTracks)
             _samples[n] = _mixer.createSourceFromFile(paths[n]);
     }
@@ -53,16 +58,33 @@ class DrumMachineExample : TurtleGame
         double playbackTimeSinceStart = _mixer.playbackTimeInSeconds();
 
         // Which step are we in?
-        int curstep = cast(int)( BPM * (playbackTimeSinceStart / 60.0) * (numStepsInLoop / 4) );
+        double fcurstep = BPM * (playbackTimeSinceStart / 60.0) * (numStepsInLoop / 4);
+        if (fcurstep < 0)
+            return;
+
+        int curstep = cast(int)(fcurstep);
+        double delayBeforePlay = (curstep + 1 - fcurstep) * (60.0 / (BPM * 4));
+
         curstep = curstep % numStepsInLoop;
         assert(curstep >= 0 && curstep < numStepsInLoop);
 
         if ((_oldStep != -1) && (_oldStep != curstep))
         {
+            // A step was changed.
+            // Schedule all notes that would happen at next step.
+            int nextStep = (curstep + 1) % numStepsInLoop;
+
             for (int track = 0; track < numTracks; ++track)
             {
-                if (_steps[track][curstep])
-                    _mixer.play(_samples[track], 0.5f, track);   
+                if (_steps[track][nextStep])
+                {                    
+                    assert(delayBeforePlay >= 0);
+                    PlayOptions options;
+                    options.volume = 0.5f;
+                    options.channel = anyMixerChannel;
+                    options.delayBeforePlay = delayBeforePlay;
+                    _mixer.play(_samples[track], options);
+                }
             }
         }
         _oldStep = curstep;
@@ -90,7 +112,13 @@ class DrumMachineExample : TurtleGame
         if (button == MouseButton.left)
             _steps[track][step] = !_steps[track][step];
         else if (button == MouseButton.right)
-            _mixer.play(_samples[track], 0.5f, track);
+        {
+            PlayOptions options;
+            options.volume = 0.5f;
+            options.channel = anyMixerChannel;
+            options.delayBeforePlay = 0;
+            _mixer.play(_samples[track], options);
+        }
     }
 
     override void draw()

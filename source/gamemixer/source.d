@@ -53,6 +53,21 @@ public:
                                 out bool terminated)
     {
         assert(inoutChannels.length == 2);
+
+        // deals with negative frameOffset
+        if (frameOffset + frames <= 0)
+            return; // not playing yet
+
+        if (frameOffset < 0)
+        {
+            // Adjust to only a smaller subpart of the beginning of the source.
+            int skip = -frameOffset;
+            frames -= skip;
+            frameOffset = 0;
+            for (int chan = 0; chan < 2; ++chan)
+                inoutChannels[chan] += skip;
+        }
+
         _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated);         
     }
 
