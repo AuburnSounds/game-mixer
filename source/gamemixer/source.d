@@ -187,6 +187,20 @@ struct DecodedStream
                 _lengthIsKnown = true;
                 _sourceLengthInFrames = _framesDecodedAndResampled;
                 assert(fullyDecoded());
+
+                // Fills with zeroes the rest of the buffers, if any output needed.
+                if (frames > framesDone)
+                {
+                    int remain = frames - framesDone;
+                    for (int chan = 0; chan < _channels; ++chan)
+                    {
+                        for (int n = 0; n < remain; ++n)
+                        {
+                            _decodedBuffers[chan].pushBack(0.0f);
+                        }
+                    }
+                    framesDone += remain;
+                }
                 break;
             }
             framesDone += framesRead;
