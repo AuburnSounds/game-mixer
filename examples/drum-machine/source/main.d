@@ -26,8 +26,8 @@ enum Sounds
 static immutable string[numTracks] paths = 
     ["kick.wav", "hihat.wav", "openhat.wav", "snare.wav", "cowbell.wav", "wood.wav"];
 
-// Note: game-mixer is not really appropriate to make a drum-machine.
-// Notes would need to be triggered in an audio thread callback not in graphics animation.
+// Note: game-mixer is not really appropriate to make a drum-machine, but it is for the example.
+// Notes would ideally need to be triggered in an audio thread callback not in graphics animation.
 // Right now we are dependent on the animation callback being called.
 
 // A simple drum machine example
@@ -131,8 +131,6 @@ class DrumMachineExample : TurtleGame
         float W = windowWidth();
         float H = windowHeight();
 
-        float PAD_SIZE = 16; // TODO: adapt when window resize
-
         int mstep = -1;
         int mtrack = -1;
         getStepAndTrack(mouse.positionX, mouse.positionY, mstep, mtrack);
@@ -185,4 +183,3 @@ private:
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ],
     ];
 }
-
