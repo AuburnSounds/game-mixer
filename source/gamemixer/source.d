@@ -66,7 +66,7 @@ private:
 
 bool isChannelCountValid(int channels)
 {
-    return /*channels == 1 ||*/ channels == 2;
+    return channels == 1 || channels == 2;
 }
 
 
