@@ -1,6 +1,5 @@
 import std.stdio;
 import std.math;
-
 import turtle;
 import gamemixer;
 
@@ -28,7 +27,8 @@ static immutable string[numTracks] paths =
     ["kick.wav", "hihat.wav", "openhat.wav", "snare.wav", "cowbell.wav", "wood.wav"];
 
 // Note: game-mixer is not really appropriate to make a drum-machine.
-// Note would need to be triggered in an audio thread callback not in graphics animation.
+// Notes would need to be triggered in an audio thread callback not in graphics animation.
+// Right now we are dependent on the animation callback being called.
 
 // A simple drum machine example
 class DrumMachineExample : TurtleGame
@@ -99,25 +99,30 @@ class DrumMachineExample : TurtleGame
         _padSize = padW < padH ? padW : padH;
     }
 
-    override void mousePressed(float x, float y, MouseButton button, int repeat)
+    bool getStepAndTrack(float x, float y, out int step, out int track)
     {
         float W = windowWidth();
         float H = windowHeight();
-        int step  = cast(int)( (x - (W / 2)) / _padSize + numStepsInLoop*0.5f);
-        int track = cast(int)( (y - (H / 2)) / _padSize + numTracks     *0.5f);
+        step  = cast(int) floor( (x - (W / 2)) / _padSize + numStepsInLoop*0.5f);
+        track = cast(int) floor( (y - (H / 2)) / _padSize + numTracks     *0.5f);
+        return !(step < 0 || track < 0 || step >= numStepsInLoop || track >= numTracks);
+    }
 
-        if (step < 0 || track < 0 || step >= numStepsInLoop || track >= numTracks)
-            return;
-
-        if (button == MouseButton.left)
-            _steps[track][step] = !_steps[track][step];
-        else if (button == MouseButton.right)
+    override void mousePressed(float x, float y, MouseButton button, int repeat)
+    {
+        int step, track;
+        if (getStepAndTrack(x, y, step, track))
         {
-            PlayOptions options;
-            options.volume = 0.5f;
-            options.channel = anyMixerChannel;
-            options.delayBeforePlay = 0;
-            _mixer.play(_samples[track], options);
+            if (button == MouseButton.left)
+                _steps[track][step] = !_steps[track][step];
+            else if (button == MouseButton.right)
+            {
+                PlayOptions options;
+                options.volume = 0.5f;
+                options.channel = anyMixerChannel;
+                options.delayBeforePlay = 0;
+                _mixer.play(_samples[track], options);
+            }
         }
     }
 
@@ -127,6 +132,10 @@ class DrumMachineExample : TurtleGame
         float H = windowHeight();
 
         float PAD_SIZE = 16; // TODO: adapt when window resize
+
+        int mstep = -1;
+        int mtrack = -1;
+        getStepAndTrack(mouse.positionX, mouse.positionY, mstep, mtrack);
 
         // draw pads
         for (int track = 0; track < numTracks; ++track)
@@ -149,8 +158,12 @@ class DrumMachineExample : TurtleGame
                     color = yellow ? RGBA(128, 128, 50, 255) : RGBA(100, 100, 100, 255);
                 }
 
+                if (track == mtrack && step == mstep)
+                    color.b += 55;
+
                 canvas.fillStyle = color;
-                canvas.fillRect(posx, posy, _padSize * 0.9f, _padSize * 0.9f);
+                canvas.fillRect(posx + _padSize * 0.05f, posy + _padSize * 0.05f, 
+                                _padSize * 0.9f, _padSize * 0.9f);
             }
         }        
     }
