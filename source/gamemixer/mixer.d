@@ -50,7 +50,7 @@ struct PlayOptions
     /// The time reference is the time given by `playbackTimeInSeconds()`.
     /// The source starts playing when `playbackTimeInSeconds` has increased by `delayBeforePlay`.
     /// Note that it still occupies the channel.
-    float delayBeforePlay;
+    float delayBeforePlay = 0.0f;
 }
 
 /// Public API for the `Mixer` object.
