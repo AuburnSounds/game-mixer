@@ -9,7 +9,7 @@ package:
 // Warning: the sequence of buffering, sample rate change, threading... is pretty complicated to follow.
 
 // Optionally buffered, threaded stream, which allows to perform File I/O in the audio thread.
-// A BufferedStream has optional threaded decoding.
+// A `BufferedStream` has optional threaded decoding, activated for streams that perform file IO.
 class BufferedStream
 {
 @nogc:

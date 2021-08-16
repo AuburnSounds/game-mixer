@@ -5,7 +5,7 @@ import gamemixer;
 
 void main()
 {
-    IMixer mixer = mixerCreate(options);
+    IMixer mixer = mixerCreate();
     
     IAudioSource music = mixer.createSourceFromFile("lits.xm");
     mixer.play(music);

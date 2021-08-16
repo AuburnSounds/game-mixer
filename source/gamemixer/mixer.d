@@ -215,8 +215,6 @@ public:
         return t / sr - _softwareLatency;
     }
 
-
-
     /// Returns: Playback sample rate.
     override float getSampleRate()
     {
@@ -452,8 +450,6 @@ private:
             _sumBuf[1].reallocBuffer(frames);
         }
 
-        // TODO: trigger sources that have been programmed to play
-
         // 1. Mix sources in stereo.
         _sumBuf[0][0..frames] = 0;
         _sumBuf[1][0..frames] = 0;
@@ -536,7 +532,7 @@ private:
 
     void applyEffect(ref EffectContext ec, IAudioEffect effect, int frames)
     {
-        enum int MAX_FRAMES_FOR_EFFECTS = 512;
+        enum int MAX_FRAMES_FOR_EFFECTS = 512; // TODO: should disappear in favor of maxInternalBuffering
 
         if (!ec.initialized)
         {
@@ -552,7 +548,7 @@ private:
         info.sampleRate                         = _sampleRate;
         info.userData                           = null;
 
-        // Buffer-splitting! It is used so that effects experience a maximum buffer size at init point.
+        // Buffer-splitting! It is used so that effects can be given a maximum buffer size at init point.
         {
             int framesDone = 0;
             while (framesDone + MAX_FRAMES_FOR_EFFECTS <= frames)
