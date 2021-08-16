@@ -1,14 +1,12 @@
 module gamemixer.source;
 
 import dplug.core;
-import audioformats;
-
+import gamemixer.bufferedstream;
 import gamemixer.resampler;
 
 nothrow:
 @nogc:
 
-// TODO: right sample rate and do not block on files...     
 
 /// Represent a music or a sample.
 interface IAudioSource
@@ -53,27 +51,8 @@ public:
                                 out bool terminated)
     {
         assert(inoutChannels.length == 2);
-        try
-        {
-            _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated); 
-        }
-        catch(Exception e)
-        {
-            // decoding error => silently doesn't play
-        }
+        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated);         
     }
-
-    // Not working, and should be useless soon
-   /* override void preload()
-    {
-        while(true)
-        {
-            bool finished;
-            _decodedStream.decodeMoreSamples(1024, 48000, finished);
-            if (finished)
-                return;
-        }
-    } */
 
 private:   
     DecodedStream _decodedStream;
@@ -99,7 +78,7 @@ struct DecodedStream
         _framesDecodedAndResampled = 0;
         _sourceLengthInFrames = -1;
         _streamIsTerminated = false;
-        _stream.openFromFile(path);
+        _stream = mallocNew!BufferedStream(path);
         _resamplersInitialized = false;
         assert( isChannelCountValid(_stream.getNumChannels()) );
     }
@@ -110,9 +89,14 @@ struct DecodedStream
         _framesDecodedAndResampled = 0;
         _sourceLengthInFrames = -1;
         _streamIsTerminated = false;
-        _stream.openFromMemory(inputData);
+        _stream = mallocNew!BufferedStream(inputData);
         _resamplersInitialized = false;
         assert( isChannelCountValid(_stream.getNumChannels()) );
+    }
+
+    ~this()
+    {
+        destroyFree(_stream);
     }
 
     void mixIntoBuffer(float*[] inoutChannels, 
@@ -120,7 +104,7 @@ struct DecodedStream
                        int frameOffset,
                        float volume, 
                        float sampleRate, // will not change across calls
-                       out bool terminated)
+                       out bool terminated) nothrow
     {
         // Initialize resamplers lazily
         if (!_resamplersInitialized)
@@ -161,8 +145,8 @@ struct DecodedStream
             // mix into target buffer
             float* decodedL = _decodedBuffers[0].ptr;
             float* decodedR = _decodedBuffers[1].ptr;
-            inoutChannels[0][0..framesToCopy] += decodedL[frameOffset..framesEnd];
-            inoutChannels[1][0..framesToCopy] += decodedR[frameOffset..framesEnd];
+            inoutChannels[0][0..framesToCopy] += decodedL[frameOffset..framesEnd] * volume;
+            inoutChannels[1][0..framesToCopy] += decodedR[frameOffset..framesEnd] * volume;
         }
         
         // fills the rest with zeroes
@@ -231,6 +215,7 @@ struct DecodedStream
 
     /// Read from stream. Can return any number of frames.
     /// Note that "terminated" is not the stream being terminated, but the _resampling output_ being terminated.
+    /// That happens a few samples later.
     int readFromStreamAndResample(float sampleRate, out bool terminated) nothrow
     {
         _resampledBuffer[0].clearContents();
@@ -299,10 +284,11 @@ private:
 
     enum CHUNK_FRAMES_DECODER = 128; // PERF: tune that, while decoding a long MP3.
     
-    AudioStream _stream;
+    BufferedStream _stream;         // using a BufferedStream to avoid blocking I/O
     AudioResampler[2] _resamplers;
     Vec!float[2] _decodedBuffers; // decoded and resampled whole audio    
     float[CHUNK_FRAMES_DECODER*2] _rawDecodeSamples; // interleaved samples from decoder
     float[CHUNK_FRAMES_DECODER][2] _rawDecodeSamplesDeinterleaved; // deinterleaved samples from decoder
     Vec!float[2] _resampledBuffer; // resampled scratch buffer
 }
+
