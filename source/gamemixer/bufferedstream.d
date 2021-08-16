@@ -126,7 +126,6 @@ private:
 
     void startDecodingThreadIfNeeded()
     {
-    	// For now, always start a thread.
         if (!_stream.realtimeSafe())
         {
             _threaded = true;
@@ -142,7 +141,7 @@ private:
 
             // start event thread
             _decodeThread = makeThread(&decodeStream);
-            _decodeThread.start();  
+            _decodeThread.start();
         }
     }
 

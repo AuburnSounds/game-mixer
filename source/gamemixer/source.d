@@ -22,6 +22,8 @@ nothrow:
 
 package:
 
+enum chunkFramesDecoder = 128; // PERF: tune that, while decoding a long MP3.
+
 /// Concrete implementation of `IAudioSource`.
 class AudioSource : IAudioSource
 {
@@ -169,17 +171,8 @@ struct DecodedStream
             bool terminatedResampling = false;
 
             // Decode any number of frames.
-            // Return those in _resampledBuffer.   
+            // Return those in _decodedBuffers.
             int framesRead = readFromStreamAndResample(sampleRate, terminatedResampling);
-           
-            // Store these new frames in _decodedBuffers.
-            for (int n = 0; n < framesRead; ++n)
-            {
-                // PERF: could as well push resampled audio directly in _decodedBuffers
-                _decodedBuffers[0].pushBack( _resampledBuffer[0][n] ); 
-                _decodedBuffers[1].pushBack( _resampledBuffer[1][n] );
-            }
-
             _framesDecodedAndResampled += framesRead;
 
             terminated = terminatedResampling;
@@ -218,9 +211,6 @@ struct DecodedStream
     /// That happens a few samples later.
     int readFromStreamAndResample(float sampleRate, out bool terminated) nothrow
     {
-        _resampledBuffer[0].clearContents();
-        _resampledBuffer[1].clearContents();
-
         // Get more input
         int framesDecoded;
         if (!_streamIsTerminated)
@@ -228,8 +218,8 @@ struct DecodedStream
             // Read input   
             try
             {
-                framesDecoded = _stream.readSamplesFloat(_rawDecodeSamples.ptr, CHUNK_FRAMES_DECODER);
-                _streamIsTerminated = framesDecoded != CHUNK_FRAMES_DECODER;
+                framesDecoded = _stream.readSamplesFloat(_rawDecodeSamples.ptr, chunkFramesDecoder);
+                _streamIsTerminated = framesDecoded != chunkFramesDecoder;
                 if (_streamIsTerminated)
                     _flushResamplingOutput = true; // small state machine
             }
@@ -266,12 +256,14 @@ struct DecodedStream
             return 0;
         }
 
-        _resamplers[0].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[0].ptr, framesDecoded, _resampledBuffer[0]);
-        _resamplers[1].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[1].ptr, framesDecoded, _resampledBuffer[1]);
+        size_t before = _decodedBuffers[0].length;
+        _resamplers[0].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[0].ptr, framesDecoded, _decodedBuffers[0]);
+        _resamplers[1].nextBufferPushMode(_rawDecodeSamplesDeinterleaved[1].ptr, framesDecoded, _decodedBuffers[1]);
+        size_t after = _decodedBuffers[0].length;
 
         // should return same amount of samples
-        assert(_resampledBuffer[0].length == _resampledBuffer[1].length);
-        return cast(int) _resampledBuffer[0].length;
+        assert(_decodedBuffers[0].length == _decodedBuffers[1].length);
+        return cast(int) (after - before);
     }
 
 private:
@@ -282,13 +274,11 @@ private:
     bool _flushResamplingOutput;    // Add a few silent sample at the end of decoder output.
     bool _resamplersInitialized;    // true if resampler initialized.
 
-    enum CHUNK_FRAMES_DECODER = 128; // PERF: tune that, while decoding a long MP3.
-    
     BufferedStream _stream;         // using a BufferedStream to avoid blocking I/O
     AudioResampler[2] _resamplers;
-    Vec!float[2] _decodedBuffers; // decoded and resampled whole audio    
-    float[CHUNK_FRAMES_DECODER*2] _rawDecodeSamples; // interleaved samples from decoder
-    float[CHUNK_FRAMES_DECODER][2] _rawDecodeSamplesDeinterleaved; // deinterleaved samples from decoder
-    Vec!float[2] _resampledBuffer; // resampled scratch buffer
+    Vec!float[2] _decodedBuffers; // decoded and resampled _whole_ audio (this can be slow on resize)
+
+    float[chunkFramesDecoder*2] _rawDecodeSamples; // interleaved samples from decoder
+    float[chunkFramesDecoder][2] _rawDecodeSamplesDeinterleaved; // deinterleaved samples from decoder
 }
 
