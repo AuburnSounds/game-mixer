@@ -3,6 +3,7 @@ module gamemixer.source;
 import dplug.core;
 import gamemixer.bufferedstream;
 import gamemixer.resampler;
+import gamemixer.chunkedvec;
 
 nothrow:
 @nogc:
@@ -25,7 +26,7 @@ package:
 enum chunkFramesDecoder = 128; // PERF: tune that, while decoding a long MP3.
 
 /// Concrete implementation of `IAudioSource`.
-class AudioSource : IAudioSource
+final class AudioSource : IAudioSource
 {
 @nogc:
 public:
@@ -84,6 +85,11 @@ bool isChannelCountValid(int channels)
     return channels == 1 || channels == 2;
 }
 
+// 128kb is approx 300ms of stereo 44100Hz audio float data
+// This wasn't tuned.
+// The internet says `malloc`/`free` of 128kb should take ~10µs.
+// That should be pretty affordable.
+enum int CHUNK_SIZE_DECODED = 128 * 1024; 
 
 /// Decode a stream, keeps it in a buffer so that multiple playback are possible.
 struct DecodedStream
@@ -91,25 +97,14 @@ struct DecodedStream
 @nogc:
     void initializeFromFile(const(char)[] path)
     {
-        _lengthIsKnown = false;
-        _framesDecodedAndResampled = 0;
-        _sourceLengthInFrames = -1;
-        _streamIsTerminated = false;
         _stream = mallocNew!BufferedStream(path);
-        _channels = _stream.getNumChannels();
-        _resamplersInitialized = false;
-        assert( isChannelCountValid(_stream.getNumChannels()) );
+        commonInitialization();
     }
 
     void initializeFromMemory(const(ubyte)[] inputData)
     {
-        _lengthIsKnown = false;
-        _framesDecodedAndResampled = 0;
-        _sourceLengthInFrames = -1;
-        _streamIsTerminated = false;
         _stream = mallocNew!BufferedStream(inputData);
-        _resamplersInitialized = false;
-        assert( isChannelCountValid(_stream.getNumChannels()) );
+        commonInitialization();
     }
 
     ~this()
@@ -164,8 +159,12 @@ struct DecodedStream
             for (int chan = 0; chan < 2; ++chan)
             {            
                 int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
-                float* decoded = _decodedBuffers[sourceChan].ptr;
-                inoutChannels[chan][0..framesToCopy] += decoded[frameOffset..framesEnd] * volume;
+
+                // PERF: make that a ChunkedVec method
+                for (int n = 0; n < framesToCopy; ++n)
+                {
+                    inoutChannels[chan][n] += _decodedBuffers[sourceChan][frameOffset + n] * volume;
+                }
             }
         }
         
@@ -321,9 +320,22 @@ private:
 
     BufferedStream _stream;         // using a BufferedStream to avoid blocking I/O
     AudioResampler[2] _resamplers;
-    Vec!float[2] _decodedBuffers; // decoded and resampled _whole_ audio (this can be slow on resize)
+    ChunkedVec!float[2] _decodedBuffers; // decoded and resampled _whole_ audio (this can be slow on resize)
 
     float[chunkFramesDecoder*2] _rawDecodeSamples; // interleaved samples from decoder
     float[chunkFramesDecoder][2] _rawDecodeSamplesDeinterleaved; // deinterleaved samples from decoder
+
+    void commonInitialization()
+    {
+        _lengthIsKnown = false;
+        _framesDecodedAndResampled = 0;
+        _sourceLengthInFrames = -1;
+        _streamIsTerminated = false;
+        _channels = _stream.getNumChannels();
+        _resamplersInitialized = false;
+        for(int chan = 0; chan < _channels; ++chan)
+            _decodedBuffers[chan] = makeChunkedVec!float(CHUNK_SIZE_DECODED);
+        assert( isChannelCountValid(_stream.getNumChannels()) );
+    }
 }
 

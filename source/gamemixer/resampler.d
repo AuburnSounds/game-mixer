@@ -21,7 +21,7 @@ import core.stdc.string : memcpy;
 import core.stdc.math : sin, cos, fmod;
 import std.math : PI;
 import dplug.core.math : fast_fabs, hermite;
-import dplug.core.vec;
+import gamemixer.chunkedvec;
 
 nothrow:
 @nogc:
@@ -54,7 +54,7 @@ public:
 
     // Feed input samples, get back as much output samples as possible.
     // Note: output `Vec` isn't cleared, samples are pushed back. This can reallocate.
-    void nextBufferPushMode(float* input, int inputFrames, ref Vec!float output)
+    void nextBufferPushMode(float* input, int inputFrames, ref ChunkedVec!float output)
     {
         int framesPushed = 0;
 
