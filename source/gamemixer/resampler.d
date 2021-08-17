@@ -300,7 +300,8 @@ private:
                 *ccoutbuf++ = sample;
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
-                ccPhase = fmod(ccPhase, 1.0f);
+                assert(ccPhase >= 0);
+                ccPhase = ccPhase - cast(int)ccPhase;
             } while (ccinbuf < ccinbufend);
             phase = ccPhase;
             *outbuf = ccoutbuf;
@@ -372,7 +373,8 @@ private:
                 *ccoutbuf++ = sample;
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
-                ccPhase = fmod(ccPhase, 1.0f);
+                assert(ccPhase >= 0);
+                ccPhase = ccPhase - cast(int)ccPhase;
             } while (ccinbuf < ccinbufend);
             phase = ccPhase;
             *outbuf = ccoutbuf;
@@ -451,6 +453,7 @@ private:
             const(float)* ccinbufend = ccinbuf+ccinsize;
             float ccPhase = phase;
             float ccPhaseInc = phaseInc;
+            
             do {
                 int i;
                 float sample;
@@ -460,7 +463,8 @@ private:
                 *ccoutbuf++ = sample;
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
-                ccPhase = fmod(ccPhase, 1.0f);
+                assert(ccPhase >= 0);
+                ccPhase = ccPhase - cast(int)ccPhase;
             } while (ccinbuf < ccinbufend);
             phase = ccPhase;
             *outbuf = ccoutbuf;
@@ -500,7 +504,8 @@ private:
                 *ccoutbuf++ = cast(float)(sample/kernelSum);
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
-                ccPhase = fmod(ccPhase, 1.0f);
+                assert(ccPhase >= 0);
+                ccPhase = ccPhase - cast(int)ccPhase;
             } while (ccinbuf < ccinbufend);
             phase = ccPhase;
             *outbuf = ccoutbuf;

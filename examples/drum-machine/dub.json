@@ -5,5 +5,7 @@
     {
         "game-mixer": { "path": "../.."},
         "turtle": ">=0.0.9 <1.0.0"
-    }
+    },
+
+    "versions": [ "SDL_2010" ]
 }
