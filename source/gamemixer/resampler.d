@@ -20,7 +20,7 @@ module gamemixer.resampler;
 import core.stdc.string : memcpy;
 import core.stdc.math : sin, cos, fmod;
 import std.math : PI;
-import dplug.core.math : fast_fabs;
+import dplug.core.math : fast_fabs, hermite;
 import dplug.core.vec;
 
 nothrow:
@@ -458,8 +458,7 @@ private:
                 int i;
                 float sample;
                 if (ccoutbuf >= outbufend) break;
-                float* kernel = cubicLut.ptr+cast(int)(ccPhase*Resolution)*4;
-                for (sample = 0, i = 0; i < 4; ++i) sample += ccinbuf[i]*kernel[i];
+                sample = hermite!float(ccPhase, ccinbuf[0], ccinbuf[1], ccinbuf[2], ccinbuf[3]);
                 *ccoutbuf++ = sample;
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
@@ -610,7 +609,6 @@ package:
 
 
 // 16kb + 64kb + 64kb of tables
-__gshared float[CubicSamples] cubicLut;
 __gshared float[SincSamples+1] sincLut;
 __gshared float[SincSamples+1] windowLut;
 __gshared bool buildAudioResamplerTables_called = false;
@@ -631,15 +629,5 @@ static void buildAudioResamplerTables()
         sincLut.ptr[i] = fast_fabs(x) < SincWidth ? sinc(x) : 0.0;
         windowLut.ptr[i] = window;
     }
-    dx = 1.0/cast(float)(Resolution);
-    x = 0.0;
-    for (uint i = 0; i < Resolution; ++i, x += dx) 
-    {
-        cubicLut.ptr[i*4]   = cast(float)(-0.5*x*x*x+    x*x-0.5*x);
-        cubicLut.ptr[i*4+1] = cast(float)( 1.5*x*x*x-2.5*x*x      +1.0);
-        cubicLut.ptr[i*4+2] = cast(float)(-1.5*x*x*x+2.0*x*x+0.5*x);
-        cubicLut.ptr[i*4+3] = cast(float)( 0.5*x*x*x-0.5*x*x);
-    }
-
     buildAudioResamplerTables_called = true;
 }
