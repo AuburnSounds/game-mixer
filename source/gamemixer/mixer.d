@@ -81,18 +81,18 @@ nothrow:
     /// (All effects get destroyed automatically when the IMixer is destroyed).
     IAudioEffect createEffectCustom(EffectCallbackFunction callback, void* userData = null);
 
+    /// Creates an effect with a custom callback processing function.
+    /// (All effects get destroyed automatically when the IMixer is destroyed).
+    IAudioEffect createEffectGain();
+
     /// Returns: Time in seconds since the beginning of playback. 
     /// This is equal to `getTimeInFrames() / getSampleRate() - latency`.
     /// Warning: Because this subtract known latency, this can return a negative value.
-    /// BUG: latency reported of libsoundio is terrible.
+    /// BUG: latency reported of libsoundio is too high for WASAPI, so we have an incorrect value here.
     double playbackTimeInSeconds();
 
     /// Returns: Playback sample rate.
     float getSampleRate();
-
-    /// Creates an effect with a custom callback processing function.
-    /// (All effects get destroyed automatically when the IMixer is destroyed).
-    IAudioEffect createEffectGain();
 
     /// Returns: `true` if a playback error has been detected.
     ///          Your best bet is to recreate a `Mixer`.

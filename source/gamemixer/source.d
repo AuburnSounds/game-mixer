@@ -128,7 +128,7 @@ struct DecodedStream
         if (!_resamplersInitialized)
         {
             for (int chan = 0; chan < 2; ++chan)
-                _resamplers[chan].initialize(_stream.getSamplerate(), sampleRate);
+                _resamplers[chan].initialize(_stream.getSamplerate(), sampleRate, AudioResampler.Quality.Cubic);
             _resamplersInitialized = true;
         }
 
