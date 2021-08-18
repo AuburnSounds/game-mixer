@@ -141,9 +141,9 @@ private:
     Vec!(T*) _chunks; 
 }
 
-
 private static void mixBuffers(float* input, float* output, int frames, float volume) pure
 {
+    // LDC: Optimizing this witl inteli yield inferior results
     for (int n = 0; n < frames; ++n)
     {
         output[n] += input[n] * volume;
