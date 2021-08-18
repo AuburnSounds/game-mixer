@@ -1,7 +1,10 @@
 module gamemixer.bufferedstream;
 
 import core.atomic;
+import core.stdc.string: memcpy;
+
 import dplug.core;
+import dplug.dsp.delayline;
 import audioformats;
 
 package:
@@ -11,6 +14,7 @@ package:
 // A `BufferedStream` has optional threaded decoding, activated for streams that perform file IO.
 class BufferedStream
 {
+public:
 @nogc:
 
     enum streamingDecodingIncrement = 0.1f; // No more than 100ms in decoded at once. TODO tune
@@ -74,8 +78,8 @@ class BufferedStream
             _bufMutex.lock();
 
         loop:
-            int bufFrames = cast(int)(_streamingBuffer.length() / _channels);
 
+            int bufFrames = _bufferLength / _channels;
             if (bufFrames == 0)
             {
                 if (atomicLoad(_streamIsFinished))
@@ -90,10 +94,14 @@ class BufferedStream
             if (bufFrames > framesNeeded)
                 bufFrames = framesNeeded;
 
-            for (int n = 0; n < bufFrames * _channels; ++n)
-            {
-                outData[decodedFrames * _channels + n] = _streamingBuffer.popFront();
-            }
+            // PERF: why not read newbufFrames instead of bufFrames ?
+            int newbufFrames = _bufferLength / _channels; // re-read length to get oldest frame location
+            const(float)* readPointerOldest = _streamingBuffer.readPointer() - (_bufferLength - 1);
+            size_t bytes = float.sizeof * bufFrames * _channels; 
+            memcpy(&outData[decodedFrames * _channels], readPointerOldest, bytes);
+            _bufferLength -= bufFrames * _channels;
+            assert(_bufferLength >= 0);
+            
             decodedFrames += bufFrames;
 
             _bufMutex.unlock();
@@ -115,10 +123,15 @@ private:
     shared(bool) _decodeThreadShouldDie = false;
     shared(bool) _streamIsFinished = false;
 
+
     UncheckedMutex _bufMutex;
     ConditionVariable _bufferIsFull;
     ConditionVariable _bufferIsEmpty;
-    RingBufferNoGC!float _streamingBuffer;     // shared buffer between producer/consumer
+
+    // all protected by _bufMutex too
+    int _bufferLength;   // is counted in individual samples, not frames
+    int _bufferCapacity; // is counted in individual samples, not frames
+    Delayline!float _streamingBuffer;
 
     int _decodeIncrement; // max number of samples to decode at once, to avoid longer mutex hold
     float[] _decodeBuffer; // producer-only buffer before-pushgin
@@ -134,7 +147,11 @@ private:
 
             // compute amount of buffer we want
             int streamingBufferSamples = cast(int)(streamingBufferDuration * _stream.getSamplerate() * _channels);
-            _streamingBuffer = makeRingBufferNoGC!float(streamingBufferSamples);
+            
+            _streamingBuffer.initialize(streamingBufferSamples);
+            _bufferLength = 0;
+            _bufferCapacity = streamingBufferSamples;
+
             _decodeIncrement = cast(int)(streamingDecodingIncrement * _stream.getSamplerate());
             _decodeBuffer.reallocBuffer(_decodeIncrement * _channels);
 
@@ -155,7 +172,8 @@ private:
             _bufMutex.lock();
             
             // How much room there is in the streaming buffer?
-            int roomFrames = cast(int)( (_streamingBuffer.capacity() - _streamingBuffer.length()) / _stream.getNumChannels());
+            int roomFrames = ( _bufferCapacity - _bufferLength) / _stream.getNumChannels();
+
             assert(roomFrames >= 0);
             if (roomFrames > _decodeIncrement)
                 roomFrames = _decodeIncrement;
@@ -193,10 +211,10 @@ private:
             {
                 // Re-lock the mutex in order to fill the buffer
                 _bufMutex.lock();
-                for(int n = 0; n < framesRead * _channels; ++n)
-                {
-                    _streamingBuffer.pushBack( _decodeBuffer[n] ); // PERF: there should be a way to do it faster
-                }
+                int samples = framesRead * _channels;
+                _streamingBuffer.feedBuffer( _decodeBuffer[0..samples] );
+                _bufferLength += samples;
+                assert(_bufferLength <= _bufferCapacity);
                 _bufMutex.unlock();
                 _bufferIsEmpty.notifyOne(); // stream buffer is probably not empty anymore
             }

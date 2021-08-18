@@ -7,11 +7,10 @@ void main()
 {
     IMixer mixer = mixerCreate();
     
-    for (int n = 0; n < 10; ++n)
-    {
-        IAudioSource music = mixer.createSourceFromFile("lits.xm");
-        mixer.play(music, 0.01f);
-    }
+    IAudioSource music = mixer.createSourceFromFile("lits.xm");
+
+    float volume = 0.7f;
+    mixer.play(music, volume);
 
     writeln("Press ENTER to end the playback...");
     readln();
