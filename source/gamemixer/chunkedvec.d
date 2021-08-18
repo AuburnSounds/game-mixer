@@ -78,6 +78,59 @@ public:
         return _len;
     }
 
+    static if (is(T == float))
+    {
+        void mixIntoBuffer(float* output, int frames, int frameOffset, float volume)
+        {
+            assert(frames != 0);
+
+            // find chunk and index of frame 0
+
+            int globalIndexStart = frameOffset;
+            int globalIndexEnd = frameOffset + (frames - 1);
+
+            // compute local indices inside the chunks, and which chunks
+            int chunkStart = globalIndexStart >>> _shift;
+            int indexStart = globalIndexStart & _chunkMask;
+            int chunkEnd = globalIndexEnd >>> _shift;
+            int indexEnd = globalIndexEnd & _chunkMask;
+
+            if (chunkStart == chunkEnd)
+            {
+                mixBuffers(&_chunks[chunkStart][indexStart], &output[0], frames, volume);
+            }
+            else
+            {
+                int chunk = chunkStart;
+
+                // First chunk
+                int n = 0;
+                int len = _chunkLength - indexStart;
+                mixBuffers(&_chunks[chunkStart][indexStart], &output[0], len, volume);
+                n += len;
+                ++chunk;
+
+                // Middle chunks (full)
+                while (chunk < chunkEnd)
+                {
+                    len = _chunkLength;
+                    mixBuffers(&_chunks[chunk][0], &output[n], len, volume);
+                    n += len;
+                    chunk += 1;
+                }
+
+                assert(chunk == chunkEnd);
+
+                // Last chunk
+                len = indexEnd+1;
+                mixBuffers(&_chunks[chunk][indexEnd], &output[n], len, volume);
+                n += len;
+
+                assert(n == frames);
+            }
+        }
+    }
+
 private:
     int _chunkLength;
     int _chunkMask;
@@ -86,4 +139,13 @@ private:
     int _currentChunk;
     size_t _len;
     Vec!(T*) _chunks; 
+}
+
+
+private static void mixBuffers(float* input, float* output, int frames, float volume) pure
+{
+    for (int n = 0; n < frames; ++n)
+    {
+        output[n] += input[n] * volume;
+    }
 }

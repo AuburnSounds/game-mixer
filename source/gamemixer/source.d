@@ -160,11 +160,7 @@ struct DecodedStream
             {            
                 int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
 
-                // PERF: make that a ChunkedVec method
-                for (int n = 0; n < framesToCopy; ++n)
-                {
-                    inoutChannels[chan][n] += _decodedBuffers[sourceChan][frameOffset + n] * volume;
-                }
+                _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume);
             }
         }
         
