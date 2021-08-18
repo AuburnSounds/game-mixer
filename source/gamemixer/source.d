@@ -69,7 +69,7 @@ public:
                 inoutChannels[chan] += skip;
         }
 
-        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated);         
+        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated);
     }
 
 private:   
@@ -112,6 +112,8 @@ struct DecodedStream
         destroyFree(_stream);
     }
 
+    // Mix source[frameOffset..frames+frameOffset] into inoutChannels[0..frames] with volume `volume`,
+    // decoding more stream if needed.
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames,
                        int frameOffset,
@@ -134,11 +136,15 @@ struct DecodedStream
         {
             bool finished;
             decodeMoreSamples(framesEnd - _framesDecodedAndResampled, sampleRate, finished);
+            if (!finished)
+            {
+                assert(_framesDecodedAndResampled >= framesEnd);
+            }
         }
 
         if (_lengthIsKnown)
         {
-            if (frames >= _sourceLengthInFrames) 
+            if (frameOffset >= _sourceLengthInFrames) 
             {
                 // if we are asking for samples past starting point, 
                 // this means we have finished mixing this source
@@ -147,8 +153,8 @@ struct DecodedStream
             }
 
             // limit mixing to existing samples.
-            if (framesEnd > lengthInFrames())
-                framesEnd = lengthInFrames();
+            if (framesEnd > _sourceLengthInFrames)
+                framesEnd = _sourceLengthInFrames;
         }
 
         int framesToCopy = framesEnd - frameOffset;
@@ -163,12 +169,7 @@ struct DecodedStream
                 _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume);
             }
         }
-        
-        // fills the rest with zeroes
-        for (int chan = 0; chan < 2; ++chan)
-        {
-            inoutChannels[chan][framesToCopy..frames] = 0.0f;
-        }
+
 
         if (_lengthIsKnown)
             terminated = (framesEnd == lengthInFrames());

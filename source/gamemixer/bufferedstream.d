@@ -4,7 +4,7 @@ import core.atomic;
 import core.stdc.string: memcpy;
 
 import dplug.core;
-import dplug.dsp.delayline;
+import gamemixer.delayline;
 import audioformats;
 
 package:
