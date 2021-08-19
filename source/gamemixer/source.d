@@ -18,7 +18,10 @@ nothrow:
     void prepareToPlay(float sampleRate);
 
     /// Add output of the source to this buffer, with volume as gain.
-    void mixIntoBuffer(float*[] inoutChannels, int frames, int frameOffset, float volume, out bool terminated);
+    void mixIntoBuffer(float*[] inoutChannels, 
+                       int frames, 
+                       int frameOffset, 
+                       float[2] volume, out bool terminated);
 }
 
 package:
@@ -50,7 +53,7 @@ public:
     override void mixIntoBuffer(float*[] inoutChannels, 
                                 int frames,
                                 int frameOffset,
-                                float volume, 
+                                float[2] volume, 
                                 out bool terminated)
     {
         assert(inoutChannels.length == 2);
@@ -117,7 +120,7 @@ struct DecodedStream
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames,
                        int frameOffset,
-                       float volume, 
+                       float[2] volume, 
                        float sampleRate, // will not change across calls
                        out bool terminated) nothrow
     {
@@ -166,7 +169,7 @@ struct DecodedStream
             {            
                 int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
 
-                _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume);
+                _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume[chan]);
             }
         }
 

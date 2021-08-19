@@ -2,6 +2,8 @@ module gamemixer.mixer;
 
 import core.thread;
 import core.atomic;
+import std.math: SQRT2, PI_4;
+
 import dplug.core;
 import soundio;
 
@@ -45,6 +47,11 @@ struct PlayOptions
 
     /// The volume to play the source with.
     float volume = 1.0f;
+
+    /// The angle pan to play the source with.
+    /// -1 = full left
+    ///  1 = full right
+    float pan = 0.0f;
 
     /// The delay in seconds before which to play.
     /// The time reference is the time given by `playbackTimeInSeconds()`.
@@ -303,10 +310,17 @@ public:
             chan = findFreeChannel();
         if (chan == -1)
             return; // no free channel
+
         ChannelStatus* cs = &_channels[chan];
         cs.sourcePlaying = source;
         cs.paused = false;
-        cs.volume = options.volume;
+
+        float pan = options.pan;
+        if (pan < -1) pan = -1;
+        if (pan > 1) pan = 1;
+
+        cs.volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
+        cs.volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
 
         int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
         cs.frameOffset = -delayBeforePlayFrames;
@@ -356,7 +370,8 @@ private:
     @nogc:
         IAudioSource sourcePlaying;
         bool paused;
-        float volume;
+        float volumeL;
+        float volumeR;
         int frameOffset; // where in the source we are playing, can be negative (for zeroes)
 
         bool isAvailable()
@@ -464,7 +479,8 @@ private:
                 float*[2] inoutBuffers;
                 inoutBuffers[0] = _sumBuf[0].ptr;
                 inoutBuffers[1] = _sumBuf[1].ptr;
-                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.frameOffset, cs.volume, terminated);
+                float[2] vol = [cs.volumeL, cs.volumeR];
+                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.frameOffset, vol, terminated);
                 cs.frameOffset += frames;
                 if (terminated)
                     cs.sourcePlaying = null;

@@ -9,9 +9,9 @@ int main(string[] args)
     return 0;
 }
 
-enum int numTracks = 6;
+enum int numTracks = 7;
 enum int numStepsInLoop = 16;
-enum double BPM = 120.0;
+enum double BPM = 123.0;
 
 enum Sounds
 {
@@ -20,11 +20,18 @@ enum Sounds
     openHat,
     snare,
     cowbell,
-    wood
+    wood,
+    delay
 }
 
 static immutable string[numTracks] paths = 
-    ["kick.wav", "hihat.wav", "openhat.wav", "snare.wav", "cowbell.wav", "wood.wav"];
+    ["kick.wav",  "bass.wav",  "hihat.wav", "openhat.wav", "snare.wav",    "wood.wav",    "clap.wav"];
+
+static immutable float[numTracks] volumes = 
+    [      1.0f,        1.0f,        1.8f,          0.3f,        1.0f,          0.3f,           1.0f ];
+
+static immutable float[numTracks] panning = 
+    [      0.0f,        0.0f,       0.15f,          0.2f,        0.1f,         -0.2f,           0.0f ];
 
 // Note: game-mixer is not really appropriate to make a drum-machine, but it is for the example.
 // Notes would ideally need to be triggered in an audio thread callback not in graphics animation.
@@ -80,7 +87,8 @@ class DrumMachineExample : TurtleGame
                 {                    
                     assert(delayBeforePlay >= 0);
                     PlayOptions options;
-                    options.volume = 0.5f;
+                    options.volume = 0.5f * volumes[track];
+                    options.pan = panning[track];
                     options.channel = anyMixerChannel;
                     options.delayBeforePlay = delayBeforePlay;
                     _mixer.play(_samples[track], options);
@@ -118,7 +126,8 @@ class DrumMachineExample : TurtleGame
             else if (button == MouseButton.right)
             {
                 PlayOptions options;
-                options.volume = 0.5f;
+                options.volume = 0.5f * volumes[track];
+                options.pan = panning[track];
                 options.channel = anyMixerChannel;
                 options.delayBeforePlay = 0;
                 _mixer.play(_samples[track], options);
