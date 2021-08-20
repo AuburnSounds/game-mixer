@@ -20,8 +20,9 @@ nothrow:
     /// Add output of the source to this buffer, with volume as gain.
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames, 
-                       int frameOffset, 
-                       float[2] volume, out bool terminated);
+                       ref int frameOffset, 
+                       ref uint loopCount,
+                       float[2] volume);
 }
 
 package:
@@ -52,15 +53,18 @@ public:
 
     override void mixIntoBuffer(float*[] inoutChannels, 
                                 int frames,
-                                int frameOffset,
-                                float[2] volume, 
-                                out bool terminated)
+                                ref int frameOffset,
+                                ref uint loopCount,
+                                float[2] volume)
     {
         assert(inoutChannels.length == 2);
 
         // deals with negative frameOffset
         if (frameOffset + frames <= 0)
+        {
+            frameOffset += frames;
             return; // not playing yet
+        }
 
         if (frameOffset < 0)
         {
@@ -72,7 +76,7 @@ public:
                 inoutChannels[chan] += skip;
         }
 
-        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, volume, _sampleRate, terminated);
+        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, loopCount, volume, _sampleRate);
     }
 
 private:   
@@ -116,13 +120,14 @@ struct DecodedStream
     }
 
     // Mix source[frameOffset..frames+frameOffset] into inoutChannels[0..frames] with volume `volume`,
-    // decoding more stream if needed.
+    // decoding more stream if needed. Also extending source virtually if looping.
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames,
-                       int frameOffset,
+                       ref int frameOffset,
+                       ref uint loopCount,
                        float[2] volume, 
                        float sampleRate, // will not change across calls
-                       out bool terminated) nothrow
+                       ) nothrow
     {
         // Initialize resamplers lazily
         if (!_resamplersInitialized)
@@ -132,52 +137,58 @@ struct DecodedStream
             _resamplersInitialized = true;
         }
 
-        int framesEnd = frames + frameOffset;
-
-        // need to decoder further?
-        if (_framesDecodedAndResampled < framesEnd)
+        while (frames != 0)
         {
-            bool finished;
-            decodeMoreSamples(framesEnd - _framesDecodedAndResampled, sampleRate, finished);
-            if (!finished)
+            assert(frames >= 0);
+
+            int framesEnd = frames + frameOffset;
+
+            // need to decoder further?
+            if (_framesDecodedAndResampled < framesEnd)
             {
-                assert(_framesDecodedAndResampled >= framesEnd);
+                bool finished;
+                decodeMoreSamples(framesEnd - _framesDecodedAndResampled, sampleRate, finished);
+                if (!finished)
+                {
+                    assert(_framesDecodedAndResampled >= framesEnd);
+                }
             }
-        }
 
-        if (_lengthIsKnown)
-        {
-            if (frameOffset >= _sourceLengthInFrames) 
+            if (_lengthIsKnown)
             {
-                // if we are asking for samples past starting point, 
-                // this means we have finished mixing this source
-                terminated = true;
-                return; // nothing to mix
+                // limit mixing to existing samples.
+                if (framesEnd > _sourceLengthInFrames)
+                    framesEnd = _sourceLengthInFrames;
             }
 
-            // limit mixing to existing samples.
-            if (framesEnd > _sourceLengthInFrames)
-                framesEnd = _sourceLengthInFrames;
-        }
+        
+            int framesToCopy = framesEnd - frameOffset;
+            if (framesToCopy > 0)
+            {
+                // mix into target buffer, upmix mono if needed
+                for (int chan = 0; chan < 2; ++chan)
+                {
+                    int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
 
-        int framesToCopy = framesEnd - frameOffset;
+                    _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume[chan]);
+                }
+            }
 
-        if (framesToCopy > 0)
-        {
-            // mix into target buffer, upmix mono if needed
-            for (int chan = 0; chan < 2; ++chan)
-            {            
-                int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
+            frames -= framesToCopy;
+            frameOffset += framesToCopy;
 
-                _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume[chan]);
+            if (frames != 0)
+            {
+                assert(_lengthIsKnown);
+                if (frameOffset >= _sourceLengthInFrames) 
+                {
+                    frameOffset -= _sourceLengthInFrames; // loop
+                    loopCount -= 1;
+                    if (loopCount == 0)
+                        return;
+                }
             }
         }
-
-
-        if (_lengthIsKnown)
-            terminated = (framesEnd == lengthInFrames());
-        else
-            terminated = false;
     }
 
     // Decode in the stream buffers at least `frames` more frames.

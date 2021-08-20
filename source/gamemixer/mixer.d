@@ -36,7 +36,11 @@ struct MixerOptions
     int numChannels = 16; /// Number of possible sounds to play simultaneously.
 }
 
+/// Chooses any mixer channel.
 enum anyMixerChannel = -1;
+
+/// Loop the source forever.
+enum uint loopForever = uint.max;
 
 /// Options when playing a source.
 struct PlayOptions
@@ -58,6 +62,9 @@ struct PlayOptions
     /// The source starts playing when `playbackTimeInSeconds` has increased by `delayBeforePlay`.
     /// Note that it still occupies the channel.
     float delayBeforePlay = 0.0f;
+
+    /// Number of times the source is looped.
+    uint loopCount = 1;
 }
 
 /// Public API for the `Mixer` object.
@@ -319,7 +326,7 @@ public:
         float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
         int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
         int frameOffset = -delayBeforePlayFrames;
-        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset);
+        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount);
 
         source.prepareToPlay(_sampleRate);
     }
@@ -621,20 +628,24 @@ public:
     }
 
     // Change the currently playing source in this channel.
-    void startPlaying(IAudioSource source, float volumeL, float volumeR, int frameOffset)
+    void startPlaying(IAudioSource source, float volumeL, float volumeR, int frameOffset, uint loopCount)
     {
         _sourcePlaying = source;
         _volume[0] = volumeL;
         _volume[1] = volumeR;
         _frameOffset = frameOffset;
+        _loopCount = loopCount;
     }
 
     void produceSound(float*[2] inoutBuffers, int frames)
     {
         bool terminated = false;
-        _sourcePlaying.mixIntoBuffer(inoutBuffers, frames, _frameOffset, _volume, terminated);
-        _frameOffset += frames;
-        if (terminated)
+
+        // Calling this will modify _frameOffset and _loopCount so as to give the newer play position.
+        // When loopCount falls to zero, the source has terminated playing.
+        _sourcePlaying.mixIntoBuffer(inoutBuffers, frames, _frameOffset, _loopCount, _volume);
+
+        if (_loopCount == 0)
         {
             _sourcePlaying = null;
         }
@@ -644,4 +655,5 @@ private:
     IAudioSource _sourcePlaying;
     float[2] _volume;
     int _frameOffset; // where in the source we are playing, can be negative (for zeroes)
+    uint _loopCount;
 }
