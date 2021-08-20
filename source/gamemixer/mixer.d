@@ -311,19 +311,16 @@ public:
         if (chan == -1)
             return; // no free channel
 
-        ChannelStatus* cs = &_channels[chan];
-        cs.sourcePlaying = source;
-        cs.paused = false;
-
         float pan = options.pan;
         if (pan < -1) pan = -1;
         if (pan > 1) pan = 1;
 
-        cs.volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
-        cs.volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
-
+        float volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
+        float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
         int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
-        cs.frameOffset = -delayBeforePlayFrames;
+        int frameOffset = -delayBeforePlayFrames;
+        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset);
+
         source.prepareToPlay(_sampleRate);
     }
 
@@ -364,28 +361,13 @@ private:
     shared(bool) _shouldReadEvents = true;
 
 
-    static struct ChannelStatus
-    {       
-    nothrow:
-    @nogc:
-        IAudioSource sourcePlaying;
-        bool paused;
-        float volumeL;
-        float volumeR;
-        int frameOffset; // where in the source we are playing, can be negative (for zeroes)
-
-        bool isAvailable()
-        {
-            return sourcePlaying is null;
-        }
-    }
     Vec!ChannelStatus _channels;
     UncheckedMutex _channelsMutex;
 
     int findFreeChannel()
     {
         for (int c = 0; c < _channels.length; ++c)
-            if (_channels[c].isAvailable())
+            if (!_channels[c].isCurrentlyPlaying())
                 return c;
         return -1;
     }
@@ -469,21 +451,17 @@ private:
         _sumBuf[0][0..frames] = 0;
         _sumBuf[1][0..frames] = 0;
 
+        float*[2] inoutBuffers;
+        inoutBuffers[0] = _sumBuf[0].ptr;
+        inoutBuffers[1] = _sumBuf[1].ptr;
+
         _channelsMutex.lock(); // to protect from "play"
         for (int n = 0; n < _channels.length; ++n)
         {
             ChannelStatus* cs = &_channels[n];
-            if (cs.sourcePlaying !is null)
+            if (cs.isCurrentlyPlaying)
             {
-                bool terminated = false;
-                float*[2] inoutBuffers;
-                inoutBuffers[0] = _sumBuf[0].ptr;
-                inoutBuffers[1] = _sumBuf[1].ptr;
-                float[2] vol = [cs.volumeL, cs.volumeR];
-                cs.sourcePlaying.mixIntoBuffer(inoutBuffers, frames, cs.frameOffset, vol, terminated);
-                cs.frameOffset += frames;
-                if (terminated)
-                    cs.sourcePlaying = null;
+                cs.produceSound(inoutBuffers, frames);
             }
         }
         _channelsMutex.unlock();
@@ -595,7 +573,6 @@ extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min,
 {
     Mixer mixer = cast(Mixer)(stream.userdata);
 
-
     // Note: WASAPI can have 4 seconds buffers, so we return as frames as following:
     //   - the highest nearest valid frame count in [frame_count_min .. frame_count_max] that is below 1024.
 
@@ -630,3 +607,41 @@ static void write_sample_float64ne(char* ptr, double sample) {
     *buf = sample;
 }
 
+
+struct ChannelStatus
+{
+nothrow:
+@nogc:
+public:
+
+    /// Returns: true if this channel should have sound in it.
+    bool isCurrentlyPlaying()
+    {
+        return _sourcePlaying !is null;
+    }
+
+    // Change the currently playing source in this channel.
+    void startPlaying(IAudioSource source, float volumeL, float volumeR, int frameOffset)
+    {
+        _sourcePlaying = source;
+        _volume[0] = volumeL;
+        _volume[1] = volumeR;
+        _frameOffset = frameOffset;
+    }
+
+    void produceSound(float*[2] inoutBuffers, int frames)
+    {
+        bool terminated = false;
+        _sourcePlaying.mixIntoBuffer(inoutBuffers, frames, _frameOffset, _volume, terminated);
+        _frameOffset += frames;
+        if (terminated)
+        {
+            _sourcePlaying = null;
+        }
+    }
+
+private:
+    IAudioSource _sourcePlaying;
+    float[2] _volume;
+    int _frameOffset; // where in the source we are playing, can be negative (for zeroes)
+}
