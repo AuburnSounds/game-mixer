@@ -1,3 +1,8 @@
+/**
+* Audio resampler.
+*
+* Copyright: Copyright Guillaume Piolat 2021.
+*/
 module gamemixer.resampler;
 
 /* simple resampler with variety of algorithms

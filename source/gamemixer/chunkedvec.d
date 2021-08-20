@@ -2,9 +2,8 @@
 Defines `ChunkedVec`, a grow-only buffer that allocates fixed chunks of memory,
 so as to avoid costly `realloc` calls with large sizes.
 
-Copyright: Guillaume Piolat 2015-2016.
+Copyright: Guillaume Piolat 2021.
 License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
-Authors:   Guillaume Piolat
 */
 module gamemixer.chunkedvec;
 

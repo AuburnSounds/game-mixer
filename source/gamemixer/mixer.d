@@ -1,3 +1,9 @@
+/**
+* `IMixer` API and definition. This is the API entrypoint.
+*
+* Copyright: Copyright Guillaume Piolat 2021.
+* License:   $(LINK2 http://www.boost.org/LICENSE_1_0.txt, Boost License 1.0)
+*/
 module gamemixer.mixer;
 
 import core.thread;
@@ -12,8 +18,6 @@ import gamemixer.source;
 
 nothrow:
 @nogc:
-
-// TODO call endPlaying for master effects
 
 /// Create a `Mixer` and start playback.
 IMixer mixerCreate(MixerOptions options = MixerOptions.init)

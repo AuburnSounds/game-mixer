@@ -1,6 +1,10 @@
 {
     "name": "game-mixer",
 
+    "description": "Sound API for your game",
+
+    "license": "BSL-1.0",
+
     "dependencies": 
     {
         "dplug:core": "~>12.0",
