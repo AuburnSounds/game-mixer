@@ -95,9 +95,13 @@ nothrow:
     ///ditto
     IAudioSource createSourceFromFile(const(char[]) path);
 
-    /// Play a source on a channel.
+    /// Play a source.
     void play(IAudioSource source, PlayOptions options);
     void play(IAudioSource source, float volume = 1.0f);
+
+    /// Stop sound playing on a given channel.
+    void stopChannel(int channel, float fadeOutSecs = 0.040f);
+    void stopAllChannels(float fadeOutSecs = 0.040f);
 
     /// Sets the volume of the master bus (volume should typically be between 0 and 1).
     void setMasterVolume(float volume);
@@ -121,6 +125,7 @@ nothrow:
 
     /// Returns: Playback sample rate.
     float getSampleRate();
+
 
     /// Returns: `true` if a playback error has been detected.
     ///          Your best bet is to recreate a `Mixer`.
@@ -353,6 +358,17 @@ public:
                                      crossFadeInSecs, crossFadeOutSecs, fadeInSecs);
 
         source.prepareToPlay(_sampleRate);
+    }
+
+    override void stopChannel(int channel, float fadeOutSecs)
+    {
+        _channels[channel].stop(fadeOutSecs);
+    }
+
+    override void stopAllChannels(float fadeOutSecs)
+    {
+        for (int chan = 0; chan < _channels.length; ++chan)
+            _channels[chan].stop(fadeOutSecs);
     }
 
     long playbackTimeInFrames()
@@ -723,6 +739,14 @@ public:
             {
                 startFadeIn(fadeInSecs);
             }
+        }
+    }
+
+    void stop(float fadeOutSecs)
+    {
+        for (int n = 0; n < MAX_SOUND_PER_CHANNEL; ++n)
+        {
+            _sounds[n].stopPlayingFadeOut(fadeOutSecs);
         }
     }
 
