@@ -80,7 +80,7 @@ public:
 
     static if (is(T == float))
     {
-        void mixIntoBuffer(float* output, int frames, int frameOffset, float volume)
+        void mixIntoBuffer(float* output, int frames, int frameOffset, const(float)* volumeRamp, float volume)
         {
             assert(frames != 0);
 
@@ -97,7 +97,7 @@ public:
 
             if (chunkStart == chunkEnd)
             {
-                mixBuffers(&_chunks[chunkStart][indexStart], &output[0], frames, volume);
+                mixBuffers(&_chunks[chunkStart][indexStart], &volumeRamp[0], &output[0], frames, volume);
             }
             else
             {
@@ -106,7 +106,7 @@ public:
                 // First chunk
                 int n = 0;
                 int len = _chunkLength - indexStart;
-                mixBuffers(&_chunks[chunkStart][indexStart], &output[0], len, volume);
+                mixBuffers(&_chunks[chunkStart][indexStart], &volumeRamp[0], &output[0], len, volume);
                 n += len;
                 ++chunk;
 
@@ -114,7 +114,7 @@ public:
                 while (chunk < chunkEnd)
                 {
                     len = _chunkLength;
-                    mixBuffers(&_chunks[chunk][0], &output[n], len, volume);
+                    mixBuffers(&_chunks[chunk][0], &volumeRamp[n], &output[n], len, volume);
                     n += len;
                     chunk += 1;
                 }
@@ -123,7 +123,7 @@ public:
 
                 // Last chunk
                 len = indexEnd+1;
-                mixBuffers(&_chunks[chunk][indexEnd], &output[n], len, volume);
+                mixBuffers(&_chunks[chunk][indexEnd], &volumeRamp[n], &output[n], len, volume);
                 n += len;
 
                 assert(n == frames);
@@ -141,11 +141,11 @@ private:
     Vec!(T*) _chunks; 
 }
 
-private static void mixBuffers(float* input, float* output, int frames, float volume) pure
+private static void mixBuffers(float* input, const(float)* volumeRamp, float* output, int frames, float volume) pure
 {
-    // LDC: Optimizing this witl inteli yield inferior results
+    // LDC: Optimizing this with inteli has yield inferior results in the past, be careful
     for (int n = 0; n < frames; ++n)
     {
-        output[n] += input[n] * volume;
+        output[n] += input[n] * (volume * volumeRamp[n]);
     }
 }

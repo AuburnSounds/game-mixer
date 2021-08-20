@@ -22,7 +22,8 @@ nothrow:
                        int frames, 
                        ref int frameOffset, 
                        ref uint loopCount,
-                       float[2] volume);
+                       float* volumeRamp, // multiply L by volumeRamp[n] * volume[0] 
+                       float[2] volume);  // and multiply R by volumeRamp[n] * volume[1] 
 }
 
 package:
@@ -55,28 +56,13 @@ public:
                                 int frames,
                                 ref int frameOffset,
                                 ref uint loopCount,
+                                float* volumeRamp,
                                 float[2] volume)
     {
         assert(inoutChannels.length == 2);
+        assert(frameOffset >= 0);
 
-        // deals with negative frameOffset
-        if (frameOffset + frames <= 0)
-        {
-            frameOffset += frames;
-            return; // not playing yet
-        }
-
-        if (frameOffset < 0)
-        {
-            // Adjust to only a smaller subpart of the beginning of the source.
-            int skip = -frameOffset;
-            frames -= skip;
-            frameOffset = 0;
-            for (int chan = 0; chan < 2; ++chan)
-                inoutChannels[chan] += skip;
-        }
-
-        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, loopCount, volume, _sampleRate);
+        _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, loopCount, volumeRamp, volume, _sampleRate);
     }
 
 private:   
@@ -125,6 +111,7 @@ struct DecodedStream
                        int frames,
                        ref int frameOffset,
                        ref uint loopCount,
+                       float* volumeRamp,
                        float[2] volume, 
                        float sampleRate, // will not change across calls
                        ) nothrow
@@ -170,7 +157,7 @@ struct DecodedStream
                 {
                     int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
 
-                    _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volume[chan]);
+                    _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volumeRamp, volume[chan]);
                 }
             }
 

@@ -65,6 +65,20 @@ struct PlayOptions
 
     /// Number of times the source is looped.
     uint loopCount = 1;
+
+    /// The time it takes to start the sound if the channel is already busy.
+    /// If the channel isn't busy, `faceInSecs` is used.
+    /// Default: 14ms transition.
+    float crossFadeInSecs = 0.000f; // Default was tuned on drum machine example
+
+    /// The time it takes to halt the existing sound if the channel is already busy.
+    /// If the channel isn't busy, there is nothing to halt.
+    /// Default: 40ms transition out.
+    float crossFadeOutSecs = 0.040f; // Default was tuned on drum machine example.
+
+    /// Fade in time when the channel is free. This can be used to "dull" percussive samples and give them an attack time.
+    /// Default: no fade in for maximum punch.
+    float fadeInSecs = 0.0f;
 }
 
 /// Public API for the `Mixer` object.
@@ -128,7 +142,8 @@ public:
     this(MixerOptions options)
     {
         _channels.resize(options.numChannels);
-        _channels.fill(ChannelStatus.init);
+        for (int n = 0; n < options.numChannels; ++n)
+            _channels[n] = mallocNew!ChannelStatus(n);
         _soundio = soundio_create();
         assert(_soundio !is null);
 
@@ -216,7 +231,7 @@ public:
 
         core.thread.Thread.sleep( dur!("msecs")( 200 ) );
 
-        cleanUp();        
+        cleanUp();
     }
 
     /// Returns: Time in seconds since the beginning of playback. 
@@ -318,6 +333,11 @@ public:
         if (chan == -1)
             return; // no free channel
 
+        if (chan >= _channels.length)
+        {
+            assert(false); // specified non-existing channel index
+        }
+
         float pan = options.pan;
         if (pan < -1) pan = -1;
         if (pan > 1) pan = 1;
@@ -326,7 +346,11 @@ public:
         float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
         int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
         int frameOffset = -delayBeforePlayFrames;
-        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount);
+        double crossFadeInSecs = options.crossFadeInSecs;
+        double crossFadeOutSecs = options.crossFadeOutSecs;
+        double fadeInSecs = options.fadeInSecs;
+        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount, 
+                                     crossFadeInSecs, crossFadeOutSecs, fadeInSecs);
 
         source.prepareToPlay(_sampleRate);
     }
@@ -374,7 +398,7 @@ private:
     int findFreeChannel()
     {
         for (int c = 0; c < _channels.length; ++c)
-            if (!_channels[c].isCurrentlyPlaying())
+            if (_channels[c].isAvailable())
                 return c;
         return -1;
     }
@@ -395,7 +419,7 @@ private:
     void setErrored(const(char)[] msg)
     {
         _errored = true;
-        _lastError = msg;        
+        _lastError = msg;
     }
 
     void cleanUp()
@@ -440,6 +464,9 @@ private:
             destroyFree(fx);
         }
         _allCreatedEffects.clearContents();
+
+        for (int c = 0; c < _channels.length; ++c)
+            _channels[c].destroyFree();
     }
 
     void writeCallback(SoundIoOutStream* stream, int frames)
@@ -466,10 +493,7 @@ private:
         for (int n = 0; n < _channels.length; ++n)
         {
             ChannelStatus* cs = &_channels[n];
-            if (cs.isCurrentlyPlaying)
-            {
-                cs.produceSound(inoutBuffers, frames);
-            }
+            cs.produceSound(inoutBuffers, frames, _sampleRate);
         }
         _channelsMutex.unlock();
 
@@ -615,45 +639,249 @@ static void write_sample_float64ne(char* ptr, double sample) {
 }
 
 
-struct ChannelStatus
+// A channel can be in one of four states:
+enum ChannelState
 {
+    idle,
+    fadingIn,
+    normalPlay,
+    fadingOut
+}
+
+/// Internal status of single channel.
+/// In reality, a channel support multiple sounds playing at once, in order to support cross-fades.
+final class ChannelStatus
+{   
 nothrow:
 @nogc:
 public:
 
-    /// Returns: true if this channel should have sound in it.
-    bool isCurrentlyPlaying()
+    this(int channelIndex)
     {
-        return _sourcePlaying !is null;
+    }
+
+    /// Returns: true if no sound is playing or scheduled to play on this channel
+    bool isAvailable()
+    {
+        for (int nsound = 0; nsound < MAX_SOUND_PER_CHANNEL; ++nsound)
+        {
+            if (_sounds[nsound].isPlayingOrPending())
+                return false;
+        }
+        return true;
+    }
+
+    ~this()
+    {
+        _volumeRamp.reallocBuffer(0);
     }
 
     // Change the currently playing source in this channel.
-    void startPlaying(IAudioSource source, float volumeL, float volumeR, int frameOffset, uint loopCount)
+    void startPlaying(IAudioSource source, 
+                      float volumeL, 
+                      float volumeR, 
+                      int frameOffset, 
+                      uint loopCount,
+                      float crossFadeInSecs,
+                      float crossFadeOutSecs,
+                      float fadeInSecs)
     {
-        _sourcePlaying = source;
-        _volume[0] = volumeL;
-        _volume[1] = volumeR;
-        _frameOffset = frameOffset;
-        _loopCount = loopCount;
+        // shift sound to keep most recently played
+        for (int n = MAX_SOUND_PER_CHANNEL - 1; n > 0; --n)
+        {
+            _sounds[n] = _sounds[n-1];
+        }
+
+        VolumeState _state;
+        float _currentFadeVolume = 1.0f;
+        float _fadeInDuration = 0.0f;
+        float _fadeOutDuration = 0.0f;
+
+
+        // Note: _sounds[0] is here to replace _sounds[1]. _sounds[2] and later, if playing, were already fadeouting.
+
+        with (_sounds[0])
+        {
+            _sourcePlaying = source;
+            _volume[0] = volumeL;
+            _volume[1] = volumeR;
+            _frameOffset = frameOffset;
+            _loopCount = loopCount;
+             
+            if (_sounds[1].isPlaying())
+            {
+                // There is another sound already playing, AND it has started
+                _sounds[1].stopPlayingFadeOut(crossFadeOutSecs);
+                startFadeIn(crossFadeInSecs);
+            }
+            else if (_sounds[1].isPlayingOrPending())
+            {
+                startFadeIn(fadeInSecs);
+                _sounds[1].stopPlayingImmediately();
+            }
+            else
+            {
+                startFadeIn(fadeInSecs);
+            }
+        }
     }
 
-    void produceSound(float*[2] inoutBuffers, int frames)
+    void produceSound(float*[2] inoutBuffers, int frames, float sampleRate)
     {
-        bool terminated = false;
-
-        // Calling this will modify _frameOffset and _loopCount so as to give the newer play position.
-        // When loopCount falls to zero, the source has terminated playing.
-        _sourcePlaying.mixIntoBuffer(inoutBuffers, frames, _frameOffset, _loopCount, _volume);
-
-        if (_loopCount == 0)
+        for (int nsound = 0; nsound < MAX_SOUND_PER_CHANNEL; ++nsound)
         {
-            _sourcePlaying = null;
+            SoundPlaying* sp = &_sounds[nsound];
+            if (sp._loopCount != 0)
+            {
+                // deals with negative frameOffset
+                if (sp._frameOffset + frames <= 0)
+                {
+                    sp._frameOffset += frames;
+                }
+                else
+                {
+                    if (sp._frameOffset < 0)
+                    {
+                        // Adjust to only a smaller subpart of the beginning of the source.
+                        int skip = -sp._frameOffset;
+                        frames -= skip;
+                        sp._frameOffset = 0;
+                        for (int chan = 0; chan < 2; ++chan)
+                            inoutBuffers[chan] += skip;
+                    }
+
+                    if (_volumeRamp.length < frames)
+                        _volumeRamp.reallocBuffer(frames);
+
+                    bool fadeOutFinished = false;
+
+                    final switch(sp._state) with (VolumeState)
+                    {
+                        case VolumeState.fadeIn:
+                            float fadeInIncrement = 1.0 / (sampleRate * sp._fadeInDuration);
+                            for (int n = 0; n < frames; ++n)
+                            {
+                                _volumeRamp[n] = sp._currentFadeVolume;
+                                sp._currentFadeVolume += fadeInIncrement;
+                                if (sp._currentFadeVolume > 1.0f)
+                                {
+                                    sp._currentFadeVolume = 1.0f;
+                                    sp._state = VolumeState.constant;
+                                }
+                            }
+                            break;
+
+                        case VolumeState.fadeOut:
+                            float fadeOutIncrement = 1.0 / (sampleRate * sp._fadeOutDuration);
+                            for (int n = 0; n < frames; ++n)
+                            {
+                                _volumeRamp[n] = sp._currentFadeVolume;
+                                sp._currentFadeVolume -= fadeOutIncrement;
+                                if (sp._currentFadeVolume < 0.0f)
+                                {
+                                    fadeOutFinished = true;
+                                    sp._currentFadeVolume = 0.0f;
+                                }
+                            }
+                            break;
+
+                        case VolumeState.constant:
+                            _volumeRamp[0..frames] = 1.0f;
+                    }
+
+                    assert(sp._frameOffset >= 0);
+
+                    // Calling this will modify _frameOffset and _loopCount so as to give the newer play position.
+                    // When loopCount falls to zero, the source has terminated playing.
+                    sp._sourcePlaying.mixIntoBuffer(inoutBuffers, frames, sp._frameOffset, sp._loopCount, _volumeRamp.ptr, sp._volume);
+
+                    // End of fadeout, stop playing immediately.
+                    if (fadeOutFinished)
+                        sp.stopPlayingImmediately();
+
+                    if (sp._loopCount == 0)
+                    {
+                        sp._sourcePlaying = null;
+                    }
+                }
+            }
         }
     }
 
 private:
-    IAudioSource _sourcePlaying;
-    float[2] _volume;
-    int _frameOffset; // where in the source we are playing, can be negative (for zeroes)
-    uint _loopCount;
+    // 2 Sounds max since the initial use case was cross-fading music on the same channel.
+    enum MAX_SOUND_PER_CHANNEL = 2; 
+
+    SoundPlaying[MAX_SOUND_PER_CHANNEL] _sounds; // item 0 is the currently playing sound, the other ones are the fading out sounds
+    float[] _volumeRamp = null;
+
+    enum VolumeState
+    {
+        fadeIn,
+        fadeOut,
+        constant,
+    }
+
+    static struct SoundPlaying
+    {
+    nothrow:
+    @nogc:
+        IAudioSource _sourcePlaying;
+        float[2] _volume;
+        int _frameOffset; // where in the source we are playing, can be negative (for zeroes)
+        uint _loopCount;
+
+        VolumeState _state;
+        float _currentFadeVolume = 1.0f;
+        float _fadeInDuration = 0.0f;
+        float _fadeOutDuration = 0.0f;
+
+        // true if playing
+        bool isPlayingOrPending()
+        {
+            return _loopCount != 0;
+        }
+
+        // true if playing, or scheduled to play
+        bool isPlaying()
+        {
+            return isPlayingOrPending() && (_frameOffset >= 0);
+        }
+
+        void startVolumeStateConstant()
+        {
+            _state = VolumeState.constant;
+            _currentFadeVolume = 1.0f;
+        }
+
+        void startFadeIn(float duration)
+        {
+            if (duration == 0)
+                startVolumeStateConstant();
+            else
+            {
+                _state = VolumeState.fadeIn;
+                _fadeInDuration = duration;
+                _currentFadeVolume = 0.0f;
+            }
+        }
+
+        void stopPlayingFadeOut(float duration)
+        {
+            if (duration == 0)
+            {
+                stopPlayingImmediately();
+            }
+            else
+            {
+                _state = VolumeState.fadeOut;
+                _fadeOutDuration = duration;
+            }
+        }
+
+        void stopPlayingImmediately()
+        {
+            _loopCount = 0;
+        }
+    }
 }

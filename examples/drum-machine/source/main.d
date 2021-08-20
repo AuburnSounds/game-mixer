@@ -47,7 +47,6 @@ class DrumMachineExample : TurtleGame
         setBackgroundColor( color("#202020") );
 
         MixerOptions options;
-        options.numChannels = 32;
         _mixer = mixerCreate(options);
         foreach(n; 0..numTracks)
             _samples[n] = _mixer.createSourceFromFile(paths[n]);
@@ -89,7 +88,7 @@ class DrumMachineExample : TurtleGame
                     PlayOptions options;
                     options.volume = 0.5f * volumes[track];
                     options.pan = panning[track];
-                    options.channel = anyMixerChannel;
+                    options.channel = track;
                     options.delayBeforePlay = delayBeforePlay;
                     _mixer.play(_samples[track], options);
                 }
@@ -128,7 +127,7 @@ class DrumMachineExample : TurtleGame
                 PlayOptions options;
                 options.volume = 0.5f * volumes[track];
                 options.pan = panning[track];
-                options.channel = anyMixerChannel;
+                options.channel = track;
                 options.delayBeforePlay = 0;
                 _mixer.play(_samples[track], options);
             }
