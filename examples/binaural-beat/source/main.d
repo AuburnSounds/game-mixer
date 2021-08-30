@@ -18,12 +18,13 @@ void main()
 nothrow:
 @nogc:
 
-void addSinusoid(float*[] inoutBuffer, int frames, EffectCallbackInfo info)
+void addSinusoid(ref AudioBuffer!float inoutBuffer, EffectCallbackInfo info)
 {
     double invSR = 1.0f / info.sampleRate;
-    for (int chan = 0; chan < inoutBuffer.length; ++chan)
+    int frames = inoutBuffer.frames();
+    for (int chan = 0; chan < inoutBuffer.channels(); ++chan)
     {
-        float* buf = inoutBuffer[chan];
+        float* buf = inoutBuffer[chan].ptr;
         for (int n = 0; n < frames; ++n)
         {
             float FREQ = (chan % 2) ? 52.0f : 62.0f;

@@ -162,7 +162,6 @@ struct DecodedStream
                 for (int chan = 0; chan < 2; ++chan)
                 {
                     int sourceChan = chan < _channels ? chan : 0; // only works for mono and stereo sources
-
                     _decodedBuffers[sourceChan].mixIntoBuffer(inoutChannels[chan], framesToCopy, frameOffset, volumeRamp, volume[chan]);
                 }
             }

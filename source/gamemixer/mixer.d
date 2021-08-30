@@ -11,6 +11,7 @@ import core.atomic;
 import std.math: SQRT2, PI_4;
 
 import dplug.core;
+import dplug.audio;
 import soundio;
 
 import gamemixer.effects;
@@ -407,7 +408,7 @@ private:
     bool _errored;
     const(char)[] _lastError;
 
-    float[][2] _sumBuf;
+    AudioBuffer!float _sumBuf;
 
     shared(bool) _shouldReadEvents = true;
 
@@ -475,9 +476,6 @@ private:
             _soundio = null;
         }
 
-        _sumBuf[0].reallocBuffer(0);
-        _sumBuf[1].reallocBuffer(0);
-
         // Destroy all effects
         foreach(fx; _allCreatedEffects)
         {
@@ -495,25 +493,27 @@ private:
 
         SoundIoChannelArea* areas;
 
-        if (frames > _sumBuf[0].length)
+        // Extend storage if need be.
+        if (frames > _sumBuf.frames())
         {
-            _sumBuf[0].reallocBuffer(frames);
-            _sumBuf[1].reallocBuffer(frames);
+            _sumBuf.resize(2, frames); 
         }
 
+        // Take the fisrt `frames` frames as current buf.
+        AudioBuffer!float masterBuf = _sumBuf.sliceSubBuffer(0, frames);
+
         // 1. Mix sources in stereo.
-        _sumBuf[0][0..frames] = 0;
-        _sumBuf[1][0..frames] = 0;
+        masterBuf.fillWithZeroes();
 
         float*[2] inoutBuffers;
-        inoutBuffers[0] = _sumBuf[0].ptr;
-        inoutBuffers[1] = _sumBuf[1].ptr;
+        inoutBuffers[0] = masterBuf.getChannelPointer(0);
+        inoutBuffers[1] = masterBuf.getChannelPointer(1);
 
         _channelsMutex.lock(); // to protect from "play"
         for (int n = 0; n < _channels.length; ++n)
         {
             ChannelStatus* cs = &_channels[n];
-            cs.produceSound(inoutBuffers, frames, _sampleRate);
+            cs.produceSound(inoutBuffers, masterBuf.frames(), _sampleRate);
         }
         _channelsMutex.unlock();
 
@@ -522,12 +522,12 @@ private:
         int numMasterEffects = cast(int) _masterEffects.length;
         for (int numFx = 0; numFx < numMasterEffects; ++numFx)
         {            
-            applyEffect(_masterEffectsContexts[numFx], _masterEffects[numFx], frames);
+            applyEffect(masterBuf, _masterEffectsContexts[numFx], _masterEffects[numFx], frames);
         }
         _masterEffectsMutex.unlock();
 
         // 3. Apply post gain effect
-        applyEffect(_masterGainPostFxContext, _masterGainPostFx, frames);
+        applyEffect(masterBuf, _masterGainPostFxContext, _masterGainPostFx, frames);
 
         _framesElapsed += frames;
 
@@ -575,7 +575,7 @@ private:
         }
     }
 
-    void applyEffect(ref EffectContext ec, IAudioEffect effect, int frames)
+    void applyEffect(ref AudioBuffer!float inoutBuf, ref EffectContext ec, IAudioEffect effect, int frames)
     {
         enum int MAX_FRAMES_FOR_EFFECTS = 512; // TODO: should disappear in favor of maxInternalBuffering
 
@@ -585,33 +585,19 @@ private:
             ec.initialized = true;
         }
 
-        float*[2] inoutBuffers;
-        inoutBuffers[0] = _sumBuf[0].ptr;
-        inoutBuffers[1] = _sumBuf[1].ptr;
-
         EffectCallbackInfo info;
         info.sampleRate                         = _sampleRate;
         info.userData                           = null;
 
         // Buffer-splitting! It is used so that effects can be given a maximum buffer size at init point.
-        {
-            int framesDone = 0;
-            while (framesDone + MAX_FRAMES_FOR_EFFECTS <= frames)
-            {
-                info.timeInFramesSincePlaybackStarted   = _framesElapsed + framesDone;
 
-                effect.processAudio(inoutBuffers[0..2], MAX_FRAMES_FOR_EFFECTS, info); // apply effect
-                framesDone += MAX_FRAMES_FOR_EFFECTS;
-                inoutBuffers[0] += MAX_FRAMES_FOR_EFFECTS;
-                inoutBuffers[1] += MAX_FRAMES_FOR_EFFECTS;
-            }
-            assert(framesDone <= frames);
-            if (framesDone != frames)
-            {
-                int remain = frames - framesDone;
-                info.timeInFramesSincePlaybackStarted   = _framesElapsed + framesDone;
-                effect.processAudio(inoutBuffers[0..2], remain, info); // apply effect
-            }
+        int framesDone = 0;
+        foreach( block; inoutBuf.chunkBy(MAX_FRAMES_FOR_EFFECTS))
+        {
+            info.timeInFramesSincePlaybackStarted   = _framesElapsed + framesDone;
+            effect.processAudio(block, info); // apply effect
+            framesDone += block.frames();
+            assert(framesDone <= inoutBuf.frames());
         }
     }
 }

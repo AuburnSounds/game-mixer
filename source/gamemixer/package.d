@@ -6,6 +6,7 @@
 */
 module gamemixer;
 
+public import dplug.audio.audiobuffer;
 public import gamemixer.mixer;
 public import gamemixer.effects;
 public import gamemixer.source;

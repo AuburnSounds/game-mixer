@@ -7,6 +7,7 @@
 module gamemixer.effects;
 
 import dplug.core;
+import dplug.audio;
 
 nothrow:
 @nogc:
@@ -21,7 +22,7 @@ nothrow:
     abstract void prepareToPlay(float sampleRate, int maxFrames, int numChannels);
 
     /// Actual effect processing.
-    abstract void processAudio(float*[] inoutBuffers, int frames, EffectCallbackInfo info);
+    abstract void processAudio(ref AudioBuffer!float inoutBuffer, EffectCallbackInfo info);
 
     /// Get all parameters in this effect.
     IParameter[] getParameters()
@@ -44,7 +45,7 @@ nothrow:
 }
 
 ///
-alias EffectCallbackFunction = void function(float*[] inoutBuffer, int frames, EffectCallbackInfo info);
+alias EffectCallbackFunction = void function(ref AudioBuffer!float inoutBuffer, EffectCallbackInfo info);
 
 /// Effect callback info.
 struct EffectCallbackInfo
@@ -83,10 +84,10 @@ public:
     {
     }
 
-    override void processAudio(float*[] inoutBuffers, int frames, EffectCallbackInfo info)
+    override void processAudio(ref AudioBuffer!float inoutBuffer, EffectCallbackInfo info)
     {
         info.userData = _userData;
-        _cb(inoutBuffers, frames, info);
+        _cb(inoutBuffer, info);
     }
 
 private:
@@ -111,9 +112,10 @@ public:
         _expFactor = expDecayFactor(0.015, sampleRate);
     }
 
-    override void processAudio(float*[] inoutBuffers, int frames, EffectCallbackInfo info)
+    override void processAudio(ref AudioBuffer!float inoutBuffer, EffectCallbackInfo info)
     {
-        int numChans = cast(int) inoutBuffers.length;
+        int numChans = inoutBuffer.channels();
+        int frames = inoutBuffer.frames();
 
         float targetLevel = _params[0].getValue();
         for (int n = 0; n < frames; ++n)
@@ -121,7 +123,7 @@ public:
             _currentGain += (targetLevel - _currentGain) * _expFactor;
             for (int chan = 0; chan < numChans; ++chan)
             {
-                inoutBuffers[chan][n] *= _currentGain;
+                inoutBuffer[chan][n] *= _currentGain;
             }
         }
     }
