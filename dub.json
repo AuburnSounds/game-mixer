@@ -7,8 +7,8 @@
 
     "dependencies": 
     {
-        "dplug:core": "~>12.0",
-        "dplug:audio": "~>12.0",
+        "dplug:core": ">=12.1.2 <13.0.0",
+        "dplug:audio": ">=12.1.2 <13.0.0",
         "libsoundio-d": "~>1.0",
         "audio-formats": "~>1.1"
     }
