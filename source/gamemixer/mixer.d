@@ -500,7 +500,7 @@ private:
         }
 
         // Take the fisrt `frames` frames as current buf.
-        AudioBuffer!float masterBuf = _sumBuf.sliceSubBuffer(0, frames);
+        AudioBuffer!float masterBuf = _sumBuf.sliceFrames(0, frames);
 
         // 1. Mix sources in stereo.
         masterBuf.fillWithZeroes();
