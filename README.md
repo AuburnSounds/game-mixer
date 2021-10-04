@@ -4,7 +4,7 @@ A simple-to-use library for emitting sounds in your game.
 It was thought of as a replacement of SDL2_mixer.
 
 Current features:
-- play MP3 / WAV / XM / MOD
+- playback MP3 / OGG / WAV / XM / MOD
 - integrated resampling and threaded decoding
 - looping, fade-in/fade-out
 - progressive buffering of played audio for playing in any number of channels
