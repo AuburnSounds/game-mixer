@@ -66,7 +66,12 @@ struct PlayOptions
     /// The time reference is the time given by `playbackTimeInSeconds()`.
     /// The source starts playing when `playbackTimeInSeconds` has increased by `delayBeforePlay`.
     /// Note that it still occupies the channel.
+    /// Warning: can't use both `delayBeforePlay` and `startTimeSecs` at the same time.
     float delayBeforePlay = 0.0f;
+
+    /// Play the sound immediately, starting at a given time in the sample (in mixer time).
+    /// Warning: can't use both `delayBeforePlay` and `startTimeSecs` at the same time.
+    float startTimeSecs = 0.0f;
 
     /// Number of times the source is looped.
     uint loopCount = 1;
@@ -463,8 +468,17 @@ private:
 
         float volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
         float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
+
         int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
         int frameOffset = -delayBeforePlayFrames;
+
+        int startTimeFrames = cast(int)(0.5 + options.startTimeSecs * _sampleRate);
+        if (startTimeFrames != 0)
+            frameOffset = startTimeFrames;
+
+        // API wrong usage, can't use both delayBeforePlayFrames and startTimeSecs.
+        assert ((startTimeFrames == 0 || delayBeforePlayFrames == 0));
+
         double crossFadeInSecs = options.crossFadeInSecs;
         double crossFadeOutSecs = options.crossFadeOutSecs;
         double fadeInSecs = options.fadeInSecs;
