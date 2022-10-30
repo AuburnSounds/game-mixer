@@ -37,8 +37,14 @@ void mixerDestroy(IMixer mixer)
 /// Always stereo.
 struct MixerOptions
 {
+    /// Desired output sample rate.
     float sampleRate = 48000.0f;
-    int numChannels = 16; /// Number of possible sounds to play simultaneously.
+
+    /// Number of possible sounds to play simultaneously.
+    int numChannels = 16; 
+
+    /// The fade time it takes for one playing channel to change its volume with `setChannelVolume`. 
+    float channelVolumeSecs = 0.040f;
 }
 
 /// Chooses any mixer channel.
@@ -54,7 +60,8 @@ struct PlayOptions
     /// `anyMixerChannel` for the first free unreserved channel.
     int channel = anyMixerChannel;
 
-    /// The volume to play the source with.
+    /// The volume to play the source with. This one volume cannot change during playback.
+    /// This is multiplied by the channel-specific volume and the master volume, which can change.
     float volume = 1.0f;
 
     /// The angle pan to play the source with.
@@ -118,6 +125,9 @@ nothrow:
     void stopChannel(int channel, float fadeOutSecs = 0.040f);
     void stopAllChannels(float fadeOutSecs = 0.040f);
 
+    /// Sets the volume of a particular channel (default is 1.0f).
+    void setChannelVolume(int channel, float volume);
+
     /// Sets the volume of the master bus (volume should typically be between 0 and 1).
     void setMasterVolume(float volume);
 
@@ -171,6 +181,8 @@ nothrow:
 public:
     this(MixerOptions options)
     {
+        _channelVolumeSecs = options.channelVolumeSecs;
+
         _channels.resize(options.numChannels);
         for (int n = 0; n < options.numChannels; ++n)
             _channels[n] = mallocNew!ChannelStatus(n);
@@ -348,6 +360,11 @@ public:
         _masterGainPostFx.parameter(0).setValue(volume);
     }
 
+    override void setChannelVolume(int channel, float volume)
+    {
+        _channels[channel].setVolume(volume);
+    }
+
     override void play(IAudioSource source, float volume)
     {
         PlayOptions opt;
@@ -396,6 +413,7 @@ private:
     shared(long) _timeSincePlaybackBegan;
     float _sampleRate;
     double _softwareLatency;
+    float _channelVolumeSecs;
 
     static struct EffectContext
     {        
@@ -477,7 +495,7 @@ private:
             frameOffset = startTimeFrames;
 
         // API wrong usage, can't use both delayBeforePlayFrames and startTimeSecs.
-        assert ((startTimeFrames == 0 || delayBeforePlayFrames == 0));
+        assert ((startTimeFrames == 0) || (delayBeforePlayFrames == 0));
 
         double crossFadeInSecs = options.crossFadeInSecs;
         double crossFadeOutSecs = options.crossFadeOutSecs;
@@ -561,7 +579,7 @@ private:
         for (int n = 0; n < _channels.length; ++n)
         {
             ChannelStatus* cs = &_channels[n];
-            cs.produceSound(inoutBuffers, masterBuf.frames(), _sampleRate);
+            cs.produceSound(inoutBuffers, masterBuf.frames(), _sampleRate, this);
         }
         _channelsMutex.unlock();
 
@@ -788,8 +806,51 @@ public:
         }
     }
 
-    void produceSound(float*[2] inoutBuffers, int frames, float sampleRate)
+    void produceSound(float*[2] inoutBuffers, int frames, float sampleRate, Mixer mixer)
     {
+        // Compute channel volume ramp (if any)
+        bool hasChannelVolumeRamp = (_channelVolume != 1.0f) || (_currentChannelVolume != 1.0f);
+        bool hasConstantChannelVolume = false;
+        if (hasChannelVolumeRamp)
+        {
+            if (_chanVolumeRamp.length < frames)
+                _chanVolumeRamp.reallocBuffer(frames);
+
+            float v =  _currentChannelVolume; // RACE: technically, should be a raw atomic
+            float target = _channelVolume;
+
+            float diff = target - v;
+
+            // do we need to recompute the ramp? Or stable.
+            if (v != target)
+            {
+                float channelFaderSecs = mixer._channelVolumeSecs; // time for volume change for the channel
+                float chanIncrement = 1.0 / (sampleRate * channelFaderSecs);
+
+                for (int n = 0; n < frames; ++n)
+                {
+                    if (diff > 0)
+                    {
+                        v += chanIncrement;
+                        if (v > target) 
+                            v = target;
+                    }
+                    else
+                    {
+                        v -= chanIncrement;
+                        if (v < target) 
+                            v = target;
+                    }
+                    _chanVolumeRamp[n] = v;
+                }
+                _currentChannelVolume = v;
+            }
+            else
+            {
+                hasConstantChannelVolume = true; // instead, just multiply by constant volume
+            }
+        }
+
         for (int nsound = 0; nsound < MAX_SOUND_PER_CHANNEL; ++nsound)
         {
             SoundPlaying* sp = &_sounds[nsound];
@@ -853,6 +914,17 @@ public:
 
                     assert(sp._frameOffset >= 0);
 
+                    // Apply channel volume ramp, if any
+                    if (hasConstantChannelVolume)
+                    {
+                        // PERF: this could be done with the constant term instead
+                        _volumeRamp[0..frames] *= _currentChannelVolume;
+                    }
+                    else if (hasChannelVolumeRamp)
+                    {
+                        _volumeRamp[0..frames] *= _chanVolumeRamp[0..frames];
+                    }
+
                     // Calling this will modify _frameOffset and _loopCount so as to give the newer play position.
                     // When loopCount falls to zero, the source has terminated playing.
                     IAudioSourceInternal isource = cast(IAudioSourceInternal)(sp._sourcePlaying);
@@ -872,12 +944,21 @@ public:
         }
     }
 
+    void setVolume(float chanVolume)
+    {
+        _channelVolume = chanVolume;
+    }
+
 private:
     // 2 Sounds max since the initial use case was cross-fading music on the same channel.
     enum MAX_SOUND_PER_CHANNEL = 2; 
 
     SoundPlaying[MAX_SOUND_PER_CHANNEL] _sounds; // item 0 is the currently playing sound, the other ones are the fading out sounds
     float[] _volumeRamp = null;
+    float[] _chanVolumeRamp = null;
+
+    float _channelVolume = 1.0f;
+    float _currentChannelVolume = 1.0f;
 
     enum VolumeState
     {
