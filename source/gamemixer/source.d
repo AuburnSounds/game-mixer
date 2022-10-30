@@ -35,7 +35,7 @@ nothrow:
     /// You can ensure its length is known by full decoding it with `fullDecode()`.
     bool hasKnownLength();
 
-    /// Returns: Length of source in frames, in terms of the mixer samplerate.
+    /// Returns: Length of resampled source in frames, in terms of the mixer samplerate.
     ///          -1 if unknown.
     /// Note: call `hasKnownLength()` or `fullDecode()` if you really need that information.
     ///       Or wait until it plays completely.
@@ -46,6 +46,15 @@ nothrow:
     /// Note: call `hasKnownLength()` or `fullDecode()` if you really need that information.
     ///       Or wait until it plays completely.
     double lengthInSeconds();
+
+    /// Returns: Length of original source in seconds.
+    ///          -1 if unknown
+    /// Note: call `hasKnownLength()` or `fullDecode()` if you really need that information.
+    ///       Or wait until it plays completely.
+    int originalLengthInFrames();
+
+    /// Returns: Original sample rate from the source. The source buffer contains resampled audio.
+    float sampleRate();
 }
 
 package:
@@ -153,6 +162,16 @@ public:
         }
         else
             return -1.0;
+    }
+
+    int originalLengthInFrames() nothrow
+    {
+        return _decodedStream.originalLengthInFrames();
+    }
+
+    float sampleRate() nothrow
+    {
+        return _decodedStream.originalSampleRate();
     }
 
 private:   
@@ -445,6 +464,22 @@ private:
         for(int chan = 0; chan < _channels; ++chan)
             _decodedBuffers[chan] = makeChunkedVec!float(CHUNK_SIZE_DECODED);
         assert( isChannelCountValid(_stream.getNumChannels()) );
+    }
+
+    int originalLengthInFrames() nothrow
+    {
+        long len = _stream.getLengthInFrames();
+        assert(len >= -1);
+       
+        if (len > int.max)
+            return int.max; // longer lengths not supported by game-mixer
+
+        return cast(int) len;
+    }
+
+    float originalSampleRate() nothrow
+    {
+        return _stream.getSamplerate();
     }
 }
 

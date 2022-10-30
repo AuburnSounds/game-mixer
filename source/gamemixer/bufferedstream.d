@@ -62,6 +62,15 @@ public:
         return _stream.getSamplerate();
     }
 
+    // return original length in frames, -1 if unknown
+    long getLengthInFrames() nothrow
+    {
+        long len = _stream.getLengthInFrames();
+        if (len == audiostreamUnknownLength)
+            return -1;
+        return len;
+    }
+
     int readSamplesFloat(float* outData, int frames)
     {
         if (!_threaded)
