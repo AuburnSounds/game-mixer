@@ -129,8 +129,8 @@ nothrow:
     double playbackTimeInSeconds();
 
     /// Returns: Playback sample rate.
+    /// Once created, this is guaranteed to never change.
     float getSampleRate();
-
 
     /// Returns: `true` if a playback error has been detected.
     ///          Your best bet is to recreate a `Mixer`.
@@ -143,8 +143,18 @@ nothrow:
 
 package:
 
+
+/// Package API for the `Mixer` object.
+interface IMixerInternal
+{
+nothrow:
+@nogc:
+    float getSampleRate();
+}
+
+
 /// Implementation of `IMixer`.
-private final class Mixer : IMixer
+private final class Mixer : IMixer, IMixerInternal
 {
 nothrow:
 @nogc:
@@ -297,7 +307,7 @@ public:
     {
         try
         {
-            IAudioSource s = mallocNew!AudioSource(inputData);
+            IAudioSource s = mallocNew!AudioSource(this, inputData);
             _allCreatedSource.pushBack(s);
             return s;
         }
@@ -312,7 +322,7 @@ public:
     {
         try
         {
-            IAudioSource s = mallocNew!AudioSource(path);
+            IAudioSource s = mallocNew!AudioSource(this, path);
             _allCreatedSource.pushBack(s);
             return s;
         }
@@ -362,7 +372,9 @@ public:
         _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount, 
                                      crossFadeInSecs, crossFadeOutSecs, fadeInSecs);
 
-        source.prepareToPlay(_sampleRate);
+        IAudioSourceInternal isource = cast(IAudioSourceInternal) source;
+        assert(isource);
+        isource.prepareToPlay();
     }
 
     override void stopChannel(int channel, float fadeOutSecs)
@@ -807,7 +819,9 @@ public:
 
                     // Calling this will modify _frameOffset and _loopCount so as to give the newer play position.
                     // When loopCount falls to zero, the source has terminated playing.
-                    sp._sourcePlaying.mixIntoBuffer(inoutBuffers, frames, sp._frameOffset, sp._loopCount, _volumeRamp.ptr, sp._volume);
+                    IAudioSourceInternal isource = cast(IAudioSourceInternal)(sp._sourcePlaying);
+                    assert(isource);
+                    isource.mixIntoBuffer(inoutBuffers, frames, sp._frameOffset, sp._loopCount, _volumeRamp.ptr, sp._volume);
 
                     // End of fadeout, stop playing immediately.
                     if (fadeOutFinished)

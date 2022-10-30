@@ -10,52 +10,90 @@ import dplug.core;
 import gamemixer.bufferedstream;
 import gamemixer.resampler;
 import gamemixer.chunkedvec;
+import gamemixer.mixer;
 
 nothrow:
 @nogc:
 
 
 /// Represent a music or a sample.
+/// This isn't meant for public consumption.
 interface IAudioSource
 {
 nothrow:
 @nogc:
+    /// Decode all stream, and wait until the whole stream is decoded and resampled.
+    /// This normally happens in playback, but this call lets you do that decoding work ahead
+    /// of time.
+    /// Normally, you don't need to call this at all, and shouldn't.
+    /// Warning: THIS CAN ONLY BE CALLED BEFORE THE SOURCE HAS BEEN PLAYED. You will get
+    ///          a crash else.
+    /// Returns: true if fully decoded.
+    bool fullDecode();
+
+    /// True if the source has a known length.
+    /// You can ensure its length is known by full decoding it with `fullDecode()`.
+    bool hasKnownLength();
+
+    /// Returns: Length of source in frames, in terms of the mixer samplerate.
+    ///          -1 if unknown.
+    /// Note: call `hasKnownLength()` or `fullDecode()` if you really need that information.
+    ///       Or wait until it plays completely.
+    int lengthInFrames();
+
+    /// Returns: Length of source in seconds.
+    ///          -1.0 if unknown
+    /// Note: call `hasKnownLength()` or `fullDecode()` if you really need that information.
+    ///       Or wait until it plays completely.
+    double lengthInSeconds();
+}
+
+package:
+
+interface IAudioSourceInternal
+{
+nothrow @nogc:
     /// Called before an IAudioSource is played on a mixer channel.
-    void prepareToPlay(float sampleRate);
+    /// Note: after this call, for thread safety you're not allowed to call `fullDecode()`.
+    void prepareToPlay();
 
     /// Add output of the source to this buffer, with volume as gain.
+    /// TODO: this call is actually internal to game-mixer, remove.
     void mixIntoBuffer(float*[] inoutChannels, 
                        int frames, 
                        ref int frameOffset, 
                        ref uint loopCount,
                        float* volumeRamp, // multiply L by volumeRamp[n] * volume[0] 
-                       float[2] volume);  // and multiply R by volumeRamp[n] * volume[1] 
+                       float[2] volume);  // and multiply R by volumeRamp[n] * volume[1]
 }
-
-package:
 
 enum chunkFramesDecoder = 128; // PERF: tune that, while decoding a long MP3.
 
 /// Concrete implementation of `IAudioSource`.
-final class AudioSource : IAudioSource
+final class AudioSource : IAudioSource, IAudioSourceInternal
 {
 @nogc:
 public:
     /// Create a source from file.
-    this(const(char)[] path)
+    this(IMixerInternal mixer, const(char)[] path)
     {
+        assert(mixer);
+        _mixer = mixer;
         _decodedStream.initializeFromFile(path);
     }
 
     /// Create a source from memory data.
-    this(const(ubyte)[] inputData)
+    this(IMixerInternal mixer, const(ubyte)[] inputData)
     {
+        assert(mixer);
+        _mixer = mixer;
         _decodedStream.initializeFromMemory(inputData);
     }
 
-    override void prepareToPlay(float sampleRate)
+    override void prepareToPlay()
     {
-        _sampleRate = sampleRate;
+        _sampleRate = _mixer.getSampleRate();
+        _disallowFullDecode = true;
     }
 
     override void mixIntoBuffer(float*[] inoutChannels, 
@@ -71,9 +109,57 @@ public:
         _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, loopCount, volumeRamp, volume, _sampleRate);
     }
 
+    override bool fullDecode()
+    {
+        if (_decodedStream.fullyDecoded())
+            return true;
+
+        // If you fail here, you have called fullDecode() after play(); this is disallowed.
+        assert(!_disallowFullDecode);
+
+        if (_disallowFullDecode)
+        {
+            return false; // should do it before playing, to avoid races.
+        }
+        
+        _decodedStream.fullDecode(_mixer.getSampleRate());
+        return true; // decoding may encounter erorrs, but thisis "fully decoded"
+    }
+    
+    override bool hasKnownLength()
+    {
+        // Could have known length without being fully decoded.
+        // BUG: RACE here, the length is set by audio thread possibly.
+        return _decodedStream.lengthIsKnown();
+    }
+
+    override int lengthInFrames()
+    {
+        if (_decodedStream.lengthIsKnown())
+        {
+            // BUG: RACE here too, ditto
+            return _decodedStream.lengthInFrames();
+        }
+        else
+            return -1;
+    }
+
+    double lengthInSeconds()
+    {
+        if (_decodedStream.lengthIsKnown())
+        {
+            // BUG: RACE here too, ditto
+            return cast(double)(_decodedStream.lengthInFrames()) / _mixer.getSampleRate();
+        }
+        else
+            return -1.0;
+    }
+
 private:   
+    IMixerInternal _mixer;
     DecodedStream _decodedStream;
     float _sampleRate;
+    bool _disallowFullDecode = false;
 }
 
 private:
@@ -109,6 +195,26 @@ struct DecodedStream
     ~this()
     {
         destroyFree(_stream);
+    }
+
+    void fullDecode(float sampleRate) nothrow
+    {
+        // Simulated normal decoding.
+        // Because this is done is the command-thread, and the audio thread may play this, this is not thread-safe.
+        float[64] dummySamples = void;
+        float[32] volumeRamp = void;
+        dummySamples[] = 0.0f;
+        volumeRamp[] = 1.0f;
+        float*[2] inoutBuffers;
+        inoutBuffers[0] = &dummySamples[0];
+        inoutBuffers[1] = &dummySamples[32];
+        int frameOffset = 0;
+        uint loopCount = 1;
+        float[2] volume = [0.01f, 0.01f];
+        while(!fullyDecoded)
+        {            
+            mixIntoBuffer(inoutBuffers, 32, frameOffset, loopCount, volumeRamp.ptr, volume, sampleRate);
+        }
     }
 
     // Mix source[frameOffset..frames+frameOffset] into inoutChannels[0..frames] with volume `volume`,
@@ -342,3 +448,11 @@ private:
     }
 }
 
+package:
+
+/// A bit faster than a dynamic cast.
+/// This is to avoid TypeInfo look-up.
+T unsafeObjectCast(T)(Object obj)
+{
+    return cast(T)(cast(void*)(obj));
+}
