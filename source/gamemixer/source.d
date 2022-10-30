@@ -6,6 +6,7 @@
 */
 module gamemixer.source;
 
+import core.atomic;
 import dplug.core;
 import gamemixer.bufferedstream;
 import gamemixer.resampler;
@@ -118,6 +119,7 @@ public:
         _decodedStream.mixIntoBuffer(inoutChannels, frames, frameOffset, loopCount, volumeRamp, volume, _sampleRate);
     }
 
+    // Only meant for command thread
     override bool fullDecode()
     {
         if (_decodedStream.fullyDecoded())
@@ -134,11 +136,9 @@ public:
         _decodedStream.fullDecode(_mixer.getSampleRate());
         return true; // decoding may encounter erorrs, but thisis "fully decoded"
     }
-    
+
     override bool hasKnownLength()
     {
-        // Could have known length without being fully decoded.
-        // BUG: RACE here, the length is set by audio thread possibly.
         return _decodedStream.lengthIsKnown();
     }
 
@@ -146,7 +146,6 @@ public:
     {
         if (_decodedStream.lengthIsKnown())
         {
-            // BUG: RACE here too, ditto
             return _decodedStream.lengthInFrames();
         }
         else
@@ -157,7 +156,6 @@ public:
     {
         if (_decodedStream.lengthIsKnown())
         {
-            // BUG: RACE here too, ditto
             return cast(double)(_decodedStream.lengthInFrames()) / _mixer.getSampleRate();
         }
         else
@@ -216,6 +214,7 @@ struct DecodedStream
         destroyFree(_stream);
     }
 
+    // Called from command thread
     void fullDecode(float sampleRate) nothrow
     {
         // Simulated normal decoding.
@@ -328,7 +327,9 @@ struct DecodedStream
             {
                 _lengthIsKnown = true;
                 _sourceLengthInFrames = _framesDecodedAndResampled;
-                assert(fullyDecoded());
+
+                atomicStore!(MemoryOrder.rel)(_sourceLengthOutside, _framesDecodedAndResampled);
+                atomicStore!(MemoryOrder.rel)(_lengthIsKnownOutside, true);                
 
                 // Fills with zeroes the rest of the buffers, if any output needed.
                 if (frames > framesDone)
@@ -351,21 +352,22 @@ struct DecodedStream
         assert(framesDone >= frames);
     }
 
+    // <for outside>
     bool lengthIsKnown() nothrow
     {
-        return _lengthIsKnown;
+        return atomicLoad!(MemoryOrder.acq)( _lengthIsKnownOutside);
     }
 
     int lengthInFrames() nothrow
     {
-        assert(lengthIsKnown());
-        return _sourceLengthInFrames;
+        return atomicLoad!(MemoryOrder.acq)( _sourceLengthOutside);
     }
 
     bool fullyDecoded() nothrow
     {
-        return lengthIsKnown() && (_framesDecodedAndResampled == _sourceLengthInFrames);
+        return lengthIsKnown();
     }
+    // </for outside>
 
     /// Read from stream. Can return any number of frames.
     /// Note that "terminated" is not the stream being terminated, but the _resampling output_ being terminated.
@@ -441,8 +443,13 @@ private:
     int _channels;
     int _framesDecodedAndResampled; // Current number of decoded and resampled frames in _decodedBuffers.
     int _sourceLengthInFrames;      // Length of the resampled source in frames.
-    bool _lengthIsKnown;            // true if _sourceLengthInFrames is known.
-    bool _streamIsTerminated;       // Whether the stream has finished decoding.
+
+    // Set for consumption by the command thread.
+    shared(bool) _lengthIsKnownOutside = false;
+    shared(int) _sourceLengthOutside = -1;
+
+    bool _lengthIsKnown;            // true if _sourceLengthInFrames is known. To be used by decode thread only.
+    bool _streamIsTerminated;       // Whether the stream has finished decoding. To be used by decode thread only.
     bool _flushResamplingOutput;    // Add a few silent sample at the end of decoder output.
     bool _resamplersInitialized;    // true if resampler initialized.
 
