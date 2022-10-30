@@ -93,7 +93,8 @@ struct PlayOptions
     /// Default: 40ms transition out.
     float crossFadeOutSecs = 0.040f; // Default was tuned on drum machine example.
 
-    /// Fade in time when the channel is free. This can be used to "dull" percussive samples and give them an attack time.
+    /// Fade in time when the channel is free. This can be used to "dull" percussive samples and 
+    /// give them an attack time.
     /// Default: no fade in for maximum punch.
     float fadeInSecs = 0.0f;
 }
