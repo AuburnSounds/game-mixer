@@ -80,7 +80,7 @@ interface IMixer
   IMixer mixer = mixerCreate(options);
   ```
 - The `MixerOptions` can be customized:
-  ```
+  ```d
   struct MixerOptions
   {
       /// Desired output sample rate.
