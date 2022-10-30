@@ -101,8 +101,13 @@ nothrow:
     IAudioSource createSourceFromFile(const(char[]) path);
 
     /// Play a source.
+    /// This locks the audio thread for a short while.
     void play(IAudioSource source, PlayOptions options);
     void play(IAudioSource source, float volume = 1.0f);
+
+    /// Play several source simulatenously, these will be synchronized down to sample accuracy.
+    /// This locks the audio thread for a short while.
+    void playSimultaneously(IAudioSource[] sources, PlayOptions[] options);
 
     /// Stop sound playing on a given channel.
     void stopChannel(int channel, float fadeOutSecs = 0.040f);
@@ -347,34 +352,18 @@ public:
 
     override void play(IAudioSource source, PlayOptions options)
     {
-        int chan = options.channel;
-        if (chan == -1)
-            chan = findFreeChannel();
-        if (chan == -1)
-            return; // no free channel
+        _channelsMutex.lock();
+        _channelsMutex.unlock();
+        playInternal(source, options);
+    }
 
-        if (chan >= _channels.length)
-        {
-            assert(false); // specified non-existing channel index
-        }
-
-        float pan = options.pan;
-        if (pan < -1) pan = -1;
-        if (pan > 1) pan = 1;
-
-        float volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
-        float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
-        int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
-        int frameOffset = -delayBeforePlayFrames;
-        double crossFadeInSecs = options.crossFadeInSecs;
-        double crossFadeOutSecs = options.crossFadeOutSecs;
-        double fadeInSecs = options.fadeInSecs;
-        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount, 
-                                     crossFadeInSecs, crossFadeOutSecs, fadeInSecs);
-
-        IAudioSourceInternal isource = cast(IAudioSourceInternal) source;
-        assert(isource);
-        isource.prepareToPlay();
+    override void playSimultaneously(IAudioSource[] sources, PlayOptions[] options)
+    {
+        _channelsMutex.lock();
+        _channelsMutex.unlock();
+        assert(sources.length == options.length);
+        for (int n = 0; n < sources.length; ++n)
+            playInternal(sources[n], options[n]);
     }
 
     override void stopChannel(int channel, float fadeOutSecs)
@@ -454,6 +443,39 @@ private:
         _errored = true;
         _lastError = msg;
     }
+
+    void playInternal(IAudioSource source, PlayOptions options)
+    {
+        int chan = options.channel;
+        if (chan == -1)
+            chan = findFreeChannel();
+        if (chan == -1)
+            return; // no free channel
+
+        if (chan >= _channels.length)
+        {
+            assert(false); // specified non-existing channel index
+        }
+
+        float pan = options.pan;
+        if (pan < -1) pan = -1;
+        if (pan > 1) pan = 1;
+
+        float volumeL = options.volume * fast_cos((pan + 1) * PI_4) * SQRT2;
+        float volumeR = options.volume * fast_sin((pan + 1) * PI_4) * SQRT2;
+        int delayBeforePlayFrames = cast(int)(0.5 + options.delayBeforePlay * _sampleRate);
+        int frameOffset = -delayBeforePlayFrames;
+        double crossFadeInSecs = options.crossFadeInSecs;
+        double crossFadeOutSecs = options.crossFadeOutSecs;
+        double fadeInSecs = options.fadeInSecs;
+        _channels[chan].startPlaying(source, volumeL, volumeR, frameOffset, options.loopCount, 
+                                     crossFadeInSecs, crossFadeOutSecs, fadeInSecs);
+
+        IAudioSourceInternal isource = cast(IAudioSourceInternal) source;
+        assert(isource);
+        isource.prepareToPlay();
+    }
+
 
     void cleanUp()
     {    
