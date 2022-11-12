@@ -1,0 +1,8 @@
+{
+    "name": "loopback",
+
+    "dependencies":
+    {
+        "game-mixer": { "path": "../.."}
+    }
+}
