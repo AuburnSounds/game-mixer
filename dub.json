@@ -7,9 +7,22 @@
 
     "dependencies": 
     {
-        "dplug:core": ">=12.1.2 <13.0.0",
-        "dplug:audio": ">=12.1.2 <13.0.0",
-        "libsoundio-d": "~>1.0",
+        "dplug:core": ">=12.1.2 <14.0.0",
+        "dplug:audio": ">=12.1.2 <14.0.0",        
         "audio-formats": "~>1.1"
-    }
+    },
+
+    "configurations": [
+        {
+            "name": "regular",
+            "dependencies": 
+            {
+                "libsoundio-d": "~>1.0",
+            }
+        },
+        {
+            "name": "only-loopback",
+            "versions": ["onlyLoopback"]
+        }
+    ]
 }
