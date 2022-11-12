@@ -65,6 +65,10 @@ interface IMixer
     float getSampleRate();
     bool isErrored();
     const(char)[] lastErrorString();
+
+    /// Manual output ("loopback")
+    void loopbackGenerate(float*[2] outBuffers, int frames);
+    void loopbackMix(float*[2] inoutBuffers, int frames); ///ditto
 }
 
 
@@ -155,3 +159,23 @@ This terminates the audio threaded playback and clean-up resources from this lib
         float fadeInSecs = 0.0f;
     }
     ``` 
+
+
+### Loopback interface
+
+You can reuse `game-mixer` in your own audio callback, for example in an audio plug-in situation.
+
+
+Create an `Imixer` with `isLoopback` option. 
+```d
+MixerOptions options;
+options.isLoopback = true;
+IMixer mixer = mixerCreate(options);
+```
+
+Then generate mixer output in your own stereo buffers:
+```d
+float*[2] outBuffers = [ left.ptr, right.ptr ];
+mixer.loopbackGenerate(outBuffers, N); // can only be called if isLoopback was passed
+```
+

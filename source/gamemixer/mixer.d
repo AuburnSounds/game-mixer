@@ -12,10 +12,23 @@ import std.math: SQRT2, PI_4;
 
 import dplug.core;
 import dplug.audio;
-import soundio;
 
 import gamemixer.effects;
 import gamemixer.source;
+
+/// Restrict the library to ONLY use loopback
+//version = onlyLoopback;
+
+version(onlyLoopback)
+{
+}
+else
+    version = hasSoundIO;
+
+version(hasSoundIO)
+{
+    import soundio;
+}
 
 nothrow:
 @nogc:
@@ -37,6 +50,10 @@ void mixerDestroy(IMixer mixer)
 /// Always stereo.
 struct MixerOptions
 {
+    /// If loopback, the mixer is intended not to produce audio. Instead you should call `generateToLoopback`.
+    /// If `false` (default), the mixer will directly output audio to the OS.
+    bool isLoopback = false;
+
     /// Desired output sample rate.
     float sampleRate = 48000.0f;
 
@@ -160,6 +177,11 @@ nothrow:
     /// Returns: An error message for the last error.
     /// Warning: only call this if `isErrored()` returns `true`.
     const(char)[] lastErrorString();
+
+    /// Manual output instead of a libsoundio-d stream.
+    /// You can only call this if the mixer is created with the `isLoopback` option.
+    void loopbackGenerate(float*[2] outBuffers, int frames);
+    void loopbackMix(float*[2] inoutBuffers, int frames); ///ditto
 }
 
 package:
@@ -182,97 +204,143 @@ nothrow:
 public:
     this(MixerOptions options)
     {
+        _isLoopback = options.isLoopback;
+
+        version(onlyLoopback)
+        {
+            // If you fail here, you've used a "only loopback" configuration, and then tried to obtain a IMixer with sound I/O.
+            assert(_isLoopback);
+        }
+
         _channelVolumeSecs = options.channelVolumeSecs;
 
         _channels.resize(options.numChannels);
         for (int n = 0; n < options.numChannels; ++n)
             _channels[n] = mallocNew!ChannelStatus(n);
-        _soundio = soundio_create();
-        assert(_soundio !is null);
 
-        int err = soundio_connect(_soundio);
-        if (err != 0)
+        int err = 0;
+
+        version(hasSoundIO)
         {
-            setErrored("Out of memory");
-            _lastError = "Out of memory";
-            return;
-        }
+            if (!isLoopback)
+            {
+                _soundio = soundio_create();
+                assert(_soundio !is null);
 
-        soundio_flush_events(_soundio);
+                err = soundio_connect(_soundio);
+                if (err != 0)
+                {
+                    setErrored("Out of memory");
+                    _lastError = "Out of memory";
+                    return;
+                }
 
-        int default_out_device_index = soundio_default_output_device_index(_soundio);
-        if (default_out_device_index < 0) 
-        {
-            setErrored("No output device found");
-            return;
-        }
+                soundio_flush_events(_soundio);
 
-        _device = soundio_get_output_device(_soundio, default_out_device_index);
-        if (!_device) 
-        {
-            setErrored("Out of memory");
-            return;
-        }
+                int default_out_device_index = soundio_default_output_device_index(_soundio);
+                if (default_out_device_index < 0) 
+                {
+                    setErrored("No output device found");
+                    return;
+                }
 
-        if (!soundio_device_supports_format(_device, SoundIoFormatFloat32NE))
-        {
-            setErrored("Must support 32-bit float output");
-            return;
+                _device = soundio_get_output_device(_soundio, default_out_device_index);
+                if (!_device) 
+                {
+                    setErrored("Out of memory");
+                    return;
+                }
+
+                if (!soundio_device_supports_format(_device, SoundIoFormatFloat32NE))
+                {
+                    setErrored("Must support 32-bit float output");
+                    return;
+                }
+            }
         }
 
         _masterEffectsMutex = makeMutex();
         _channelsMutex = makeMutex();
 
-        _outstream = soundio_outstream_create(_device);
-        _outstream.format = SoundIoFormatFloat32NE; // little endian floats
-        _outstream.write_callback = &mixerWriteCallback;
-        _outstream.userdata = cast(void*)this;
-        _outstream.sample_rate = cast(int) options.sampleRate;
-        _outstream.software_latency = 0.010; // 10ms
-
-        err = soundio_outstream_open(_outstream);
-
-        if (err != 0)
+        version(hasSoundIO)
         {
-            setErrored("Unable to open device");
-            return;
-        }
+            if (!isLoopback)
+            {
+                _outstream = soundio_outstream_create(_device);
+                _outstream.format = SoundIoFormatFloat32NE; // little endian floats
+                _outstream.write_callback = &mixerWriteCallback;
+                _outstream.userdata = cast(void*)this;
+                _outstream.sample_rate = cast(int) options.sampleRate;
+                _outstream.software_latency = 0.010; // 10ms
 
-        if (_outstream.layout_error)
-        {
-            setErrored("Unable to set channel layout");
-            return;
+                err = soundio_outstream_open(_outstream);
+
+                if (err != 0)
+                {
+                    setErrored("Unable to open device");
+                    return;
+                }
+
+                if (_outstream.layout_error)
+                {
+                    setErrored("Unable to set channel layout");
+                    return;
+                }
+            }
         }
 
         _framesElapsed = 0;
         _timeSincePlaybackBegan = 0;
-        _sampleRate = _outstream.sample_rate;
+
+        version(hasSoundIO)
+        {
+            if (isLoopback)
+                _sampleRate = options.sampleRate;
+            else
+                _sampleRate = _outstream.sample_rate;
+        }
+        else
+        {
+            _sampleRate = options.sampleRate;
+        }
 
         // TODO: do something better in WASAPI
         //       do something better when latency reporting works
-        _softwareLatency = (maxInternalBuffering / _sampleRate);
+        if (isLoopback)
+            _softwareLatency = 0;
+        else
+            _softwareLatency = (maxInternalBuffering / _sampleRate);
 
         // The very last effect of the master chain is a global gain.
         _masterGainPostFx = createEffectGain();
         _masterGainPostFxContext.initialized = false;
 
-        err = soundio_outstream_start(_outstream);
-        if (err != 0)
+        version(hasSoundIO)
         {
-            setErrored("Unable to start device");
-            return;
-        }
+            if (!isLoopback)
+            {
+                err = soundio_outstream_start(_outstream);
+                if (err != 0)
+                {
+                    setErrored("Unable to start device");
+                    return;
+                }
 
-        // start event thread
-        _eventThread = makeThread(&waitEvents);
-        _eventThread.start();    
+                // start event thread
+                _eventThread = makeThread(&waitEvents);
+                _eventThread.start();    
+            }
+        }
     }
 
     ~this()
     {
         setMasterVolume(0);
 
-        core.thread.Thread.sleep( dur!("msecs")( 200 ) );
+        if (!isLoopback)
+        {
+            core.thread.Thread.sleep( dur!("msecs")( 200 ) );
+        }
 
         cleanUp();
     }
@@ -405,11 +473,42 @@ public:
         return atomicLoad(_timeSincePlaybackBegan);
     }
 
+    override void loopbackGenerate(float*[2] outBuffers, int frames)
+    {
+        // Can't use loopbackGenerate if the IMixer is not created solely for loopback output.
+        assert(isLoopback);
+
+        const(float*[2]) mixedBuffers = loopbackCallback(frames);
+        outBuffers[0][0..frames] = mixedBuffers[0][0..frames];
+        outBuffers[1][0..frames] = mixedBuffers[1][0..frames];
+    }
+
+    override void loopbackMix(float*[2] inoutBuffers, int frames)
+    {
+        // Can't use loopbackMix if the IMixer is not created solely for loopback output.
+        assert(isLoopback);
+
+        const(float*[2]) mixedBuffers = loopbackCallback(frames);
+        inoutBuffers[0][0..frames] += mixedBuffers[0][0..frames];
+        inoutBuffers[1][0..frames] += mixedBuffers[1][0..frames];
+    }
+
+    bool isLoopback()
+    {
+        return _isLoopback;
+    }
+
 private:
-    SoundIo* _soundio;
-    SoundIoDevice* _device;
-    SoundIoOutStream* _outstream;
-    dplug.core.thread.Thread _eventThread;
+    bool _isLoopback;
+
+    version(hasSoundIO)
+    {
+        SoundIo* _soundio;             // null if loopback
+        SoundIoDevice* _device;        // null if loopback
+        SoundIoOutStream* _outstream;  // null if loopback
+        dplug.core.thread.Thread _eventThread;
+    }
+
     long _framesElapsed;
     shared(long) _timeSincePlaybackBegan;
     float _sampleRate;
@@ -449,16 +548,21 @@ private:
         return -1;
     }
 
-    void waitEvents()
+    version(hasSoundIO)
     {
-        // This function calls ::soundio_flush_events then blocks until another event is ready
-        // or you call ::soundio_wakeup. Be ready for spurious wakeups.
-        while (true)
+        void waitEvents()
         {
-            bool shouldReadEvents = atomicLoad(_shouldReadEvents);
-            if (!shouldReadEvents) 
-                break;
-            soundio_wait_events(_soundio);
+            assert(!_isLoopback); // no event thread in loopback mode
+
+            // This function calls ::soundio_flush_events then blocks until another event is ready
+            // or you call ::soundio_wakeup. Be ready for spurious wakeups.
+            while (true)
+            {
+                bool shouldReadEvents = atomicLoad(_shouldReadEvents);
+                if (!shouldReadEvents) 
+                    break;
+                soundio_wait_events(_soundio);
+            }
         }
     }
 
@@ -517,30 +621,34 @@ private:
         _masterEffects.clearContents();
         _masterEffectsMutex.unlock();
 
-        if (_outstream !is null)
+        version(hasSoundIO)
         {
-            soundio_outstream_destroy(_outstream);
-            _outstream = null;
-        }
+            if (_outstream !is null)
+            {
+                assert(!_isLoopback);
+                soundio_outstream_destroy(_outstream);
+                _outstream = null;
+            }
 
-        if (_eventThread.getThreadID() !is null)
-        {
-            atomicStore(_shouldReadEvents, false);
-            soundio_wakeup(_soundio);
-            _eventThread.join();
-            destroyNoGC(_eventThread);
-        }
+            if (_eventThread.getThreadID() !is null)
+            {
+                atomicStore(_shouldReadEvents, false);
+                soundio_wakeup(_soundio);
+                _eventThread.join();
+                destroyNoGC(_eventThread);
+            }
 
-        if (_device !is null)
-        {
-            soundio_device_unref(_device);
-            _device = null;
-        }
+            if (_device !is null)
+            {
+                soundio_device_unref(_device);
+                _device = null;
+            }
 
-        if (_soundio !is null)
-        {
-            soundio_destroy(_soundio);
-            _soundio = null;
+            if (_soundio !is null)
+            {
+                soundio_destroy(_soundio);
+                _soundio = null;
+            }
         }
 
         // Destroy all effects
@@ -554,12 +662,8 @@ private:
             _channels[c].destroyFree();
     }
 
-    void writeCallback(SoundIoOutStream* stream, int frames)
+    const(float*[2]) loopbackCallback(int frames)
     {
-        assert(stream.sample_rate == _sampleRate);
-
-        SoundIoChannelArea* areas;
-
         // Extend storage if need be.
         if (frames > _sumBuf.frames())
         {
@@ -593,52 +697,68 @@ private:
         }
         _masterEffectsMutex.unlock();
 
-        // 3. Apply post gain effect
+        // Apply post gain effect
         applyEffect(masterBuf, _masterGainPostFxContext, _masterGainPostFx, frames);
 
         _framesElapsed += frames;
 
         atomicStore(_timeSincePlaybackBegan, _framesElapsed);
 
-        // 2. Pass the audio to libsoundio
+        return inoutBuffers;
+    }
 
-        int frames_left = frames;
-
-        for (;;) 
+    version(hasSoundIO)
+    {
+        void writeCallback(SoundIoOutStream* stream, int frames)
         {
-            int frame_count = frames_left;
-            if (auto err = soundio_outstream_begin_write(_outstream, &areas, &frame_count)) 
+            assert(stream.sample_rate == _sampleRate);
+
+            SoundIoChannelArea* areas;
+
+            // 1. Generate next `frames` stereo frames.
+            const(float*[2]) mixedBuffers =  loopbackCallback(frames);
+
+
+            // 2. Pass the audio to libsoundio
+
+            int frames_left = frames;
+
+            for (;;) 
             {
-                assert(false, "unrecoverable stream error");
-            }
-
-            if (!frame_count)
-                break;
-
-            const(SoundIoChannelLayout)* layout = &stream.layout;
-
-            for (int frame = 0; frame < frame_count; frame += 1) 
-            {
-                for (int channel = 0; channel < layout.channel_count; channel += 1) 
+                int frame_count = frames_left;
+                if (auto err = soundio_outstream_begin_write(_outstream, &areas, &frame_count)) 
                 {
-                    float sample = _sumBuf[channel][frame];
-                    write_sample_float32ne(areas[channel].ptr, sample);
-                    areas[channel].ptr += areas[channel].step;
+                    assert(false, "unrecoverable stream error");
                 }
-            }
 
-            if (auto err = soundio_outstream_end_write(stream)) 
-            {
-                if (err == SoundIoError.Underflow)
+                if (!frame_count)
+                    break;
+
+                const(SoundIoChannelLayout)* layout = &stream.layout;
+
+                for (int frame = 0; frame < frame_count; frame += 1) 
+                {
+                    for (int channel = 0; channel < layout.channel_count; channel += 1) 
+                    {
+                        float sample = _sumBuf[channel][frame];
+                        write_sample_float32ne(areas[channel].ptr, sample);
+                        areas[channel].ptr += areas[channel].step;
+                    }
+                }
+
+                if (auto err = soundio_outstream_end_write(stream)) 
+                {
+                    if (err == SoundIoError.Underflow)
+                        return;
+
+                    setErrored("Unrecoverable stream error");
                     return;
+                }
 
-                setErrored("Unrecoverable stream error");
-                return;
+                frames_left -= frame_count;
+                if (frames_left <= 0)
+                    break;
             }
-
-            frames_left -= frame_count;
-            if (frames_left <= 0)
-                break;
         }
     }
 
@@ -673,44 +793,46 @@ private:
 
 enum int maxInternalBuffering = 1024; // Allows to lower latency with WASAPI
 
-extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min, int frame_count_max)
+version(hasSoundIO)
 {
-    Mixer mixer = cast(Mixer)(stream.userdata);
+    extern(C) void mixerWriteCallback(SoundIoOutStream* stream, int frame_count_min, int frame_count_max)
+    {
+        Mixer mixer = cast(Mixer)(stream.userdata);
 
-    // Note: WASAPI can have 4 seconds buffers, so we return as frames as following:
-    //   - the highest nearest valid frame count in [frame_count_min .. frame_count_max] that is below 1024.
+        // Note: WASAPI can have 4 seconds buffers, so we return as frames as following:
+        //   - the highest nearest valid frame count in [frame_count_min .. frame_count_max] that is below 1024.
 
-    int frames = maxInternalBuffering;
-    if (frames < frame_count_min) frames = frame_count_min; 
-    if (frames > frame_count_max) frames = frame_count_max;
+        int frames = maxInternalBuffering;
+        if (frames < frame_count_min) frames = frame_count_min; 
+        if (frames > frame_count_max) frames = frame_count_max;
 
-    mixer.writeCallback(stream, frames);    
+        mixer.writeCallback(stream, frames);    
+    }
+
+    static void write_sample_s16ne(char* ptr, double sample) {
+        short* buf = cast(short*)ptr;
+        double range = cast(double)short.max - cast(double)short.min;
+        double val = sample * range / 2.0;
+        *buf = cast(short) val;
+    }
+
+    static void write_sample_s32ne(char* ptr, double sample) {
+        int* buf = cast(int*)ptr;
+        double range = cast(double)int.max - cast(double)int.min;
+        double val = sample * range / 2.0;
+        *buf = cast(int) val;
+    }
+
+    static void write_sample_float32ne(char* ptr, double sample) {
+        float* buf = cast(float*)ptr;
+        *buf = sample;
+    }
+
+    static void write_sample_float64ne(char* ptr, double sample) {
+        double* buf = cast(double*)ptr;
+        *buf = sample;
+    }
 }
-
-static void write_sample_s16ne(char* ptr, double sample) {
-    short* buf = cast(short*)ptr;
-    double range = cast(double)short.max - cast(double)short.min;
-    double val = sample * range / 2.0;
-    *buf = cast(short) val;
-}
-
-static void write_sample_s32ne(char* ptr, double sample) {
-    int* buf = cast(int*)ptr;
-    double range = cast(double)int.max - cast(double)int.min;
-    double val = sample * range / 2.0;
-    *buf = cast(int) val;
-}
-
-static void write_sample_float32ne(char* ptr, double sample) {
-    float* buf = cast(float*)ptr;
-    *buf = sample;
-}
-
-static void write_sample_float64ne(char* ptr, double sample) {
-    double* buf = cast(double*)ptr;
-    *buf = sample;
-}
-
 
 // A channel can be in one of four states:
 enum ChannelState
