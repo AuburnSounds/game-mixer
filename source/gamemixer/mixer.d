@@ -17,6 +17,7 @@ import gamemixer.effects;
 import gamemixer.source;
 
 /// Restrict the library to ONLY use loopback
+/// Use "loopback" DUB configuration to enable this.
 //version = onlyLoopback;
 
 version(onlyLoopback)
