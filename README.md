@@ -10,6 +10,7 @@ It was thought of as a replacement of SDL2_mixer.
 - ✅ Looping, fade-in/fade-out, delayed triggering, synchronized triggering
 - ✅ Playback volume, channel volume, master volume
 - ✅ Integrated resampling
+- ✅ Loopback: you can get mixer output in pull-mode instead of using audio I/O
 - ✅ `nothrow @nogc`
 - ✅ Based upon `libsoundio-d`: https://code.dlang.org/packages/libsoundio-d
 
