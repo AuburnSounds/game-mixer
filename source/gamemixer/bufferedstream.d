@@ -210,9 +210,15 @@ private:
             {
                 framesRead = _stream.readSamplesFloat(_decodeBuffer.ptr, roomFrames);
             }
+            catch(AudioFormatsException e)
+            {
+                destroyAudioFormatException(e);
+                // decode error, stop decoding
+                framesRead = 0;
+            }
             catch(Exception e)
             {
-                // decode error, stop decoding
+                // should not happen
                 framesRead = 0;
             }
 
