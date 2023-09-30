@@ -9,7 +9,7 @@
     {
         "dplug:core": ">=12.1.2 <14.0.0",
         "dplug:audio": ">=12.1.2 <14.0.0",        
-        "audio-formats": "~>2.0"
+        "audio-formats": "~>3.0"
     },
 
     "configurations": [
