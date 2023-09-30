@@ -6,7 +6,6 @@
         "game-mixer": { "path": "../.."}
     },
 
-    "comment": "this isn't strictly necessary, but maybe strip the libsoundio requirement",
     "subConfigurations": {
         "game-mixer": "only-loopback"
     }
