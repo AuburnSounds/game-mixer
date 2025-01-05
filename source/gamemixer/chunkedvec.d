@@ -10,7 +10,7 @@ module gamemixer.chunkedvec;
 import core.stdc.stdlib : malloc, free;
 
 import dplug.core.vec;
-import dplug.core.math;
+
 
 nothrow:
 @nogc:
@@ -147,4 +147,22 @@ private static void mixBuffers(float* input, const(float)* volumeRamp, float* ou
     {
         output[n] += input[n] * (volume * volumeRamp[n]);
     }
+}
+
+private int iFloorLog2(int i) pure @safe
+{
+    assert(i >= 1);
+    int result = 0;
+    while (i > 1)
+    {
+        i = i / 2;
+        result = result + 1;
+    }
+    return result;
+}
+
+private bool isPowerOfTwo(int i) pure @safe
+{
+    assert(i >= 0);
+    return (i != 0) && ((i & (i - 1)) == 0);
 }

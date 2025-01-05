@@ -11,6 +11,8 @@ import dplug.core.nogc;
 import dplug.core.math;
 import dplug.core.vec;
 
+nothrow @nogc:
+
 /// Allow to sample signal back in time.
 /// This delay-line has a twin write index, so that the read pointer 
 /// can read a contiguous memory area.
@@ -167,7 +169,7 @@ nothrow:
             T x0  = pData[iPart  ];
             T x1  = pData[iPart+1];
             T x2  = pData[iPart+2];
-            return hermite!T(fPart, xm1, x0, x1, x2);
+            return hermiteInterp!T(fPart, xm1, x0, x1, x2);
         }
 
         /// Third-order spline interpolation

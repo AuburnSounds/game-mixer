@@ -25,7 +25,7 @@ module gamemixer.resampler;
 import core.stdc.string : memcpy;
 import core.stdc.math : sin, cos, fmod;
 import std.math : PI;
-import dplug.core.math : fast_fabs, hermite;
+import dplug.core.math : fast_fabs, hermiteInterp;
 import gamemixer.chunkedvec;
 
 nothrow:
@@ -463,7 +463,7 @@ private:
                 int i;
                 float sample;
                 if (ccoutbuf >= outbufend) break;
-                sample = hermite!float(ccPhase, ccinbuf[0], ccinbuf[1], ccinbuf[2], ccinbuf[3]);
+                sample = hermiteInterp!float(ccPhase, ccinbuf[0], ccinbuf[1], ccinbuf[2], ccinbuf[3]);
                 *ccoutbuf++ = sample;
                 ccPhase += ccPhaseInc;
                 ccinbuf += cast(int)ccPhase;
